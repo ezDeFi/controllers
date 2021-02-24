@@ -7,7 +7,6 @@ import TokenRatesController from './assets/TokenRatesController';
 import { AssetsController } from './assets/AssetsController';
 import { NetworkController, NetworksChainId } from './network/NetworkController';
 import { AssetsContractController } from './assets/AssetsContractController';
-import CurrencyRateController from './assets/CurrencyRateController';
 
 describe('ComposableController', () => {
   it('should compose controller state', () => {
@@ -16,7 +15,6 @@ describe('ComposableController', () => {
       new AssetsController(),
       new AssetsContractController(),
       new EnsController(),
-      new CurrencyRateController(),
       new NetworkController(),
       new PreferencesController(),
       new TokenRatesController(),
@@ -34,13 +32,6 @@ describe('ComposableController', () => {
         ignoredTokens: [],
         suggestedAssets: [],
         tokens: [],
-      },
-      CurrencyRateController: {
-        conversionDate: 0,
-        conversionRate: 0,
-        currentCurrency: 'usd',
-        nativeCurrency: 'ETH',
-        usdConversionRate: 0,
       },
       EnsController: {
         ensEntries: {},
@@ -67,7 +58,6 @@ describe('ComposableController', () => {
       new AssetsController(),
       new AssetsContractController(),
       new EnsController(),
-      new CurrencyRateController(),
       new NetworkController(),
       new PreferencesController(),
       new TokenRatesController(),
@@ -80,9 +70,6 @@ describe('ComposableController', () => {
       collectibleContracts: [],
       collectibles: [],
       contractExchangeRates: {},
-      conversionDate: 0,
-      conversionRate: 0,
-      currentCurrency: 'usd',
       ensEntries: {},
       featureFlags: {},
       frequentRpcList: [],
@@ -91,13 +78,11 @@ describe('ComposableController', () => {
       ignoredTokens: [],
       ipfsGateway: 'https://ipfs.io/ipfs/',
       lostIdentities: {},
-      nativeCurrency: 'ETH',
       network: 'loading',
       provider: { type: 'mainnet', chainId: NetworksChainId.mainnet },
       selectedAddress: '',
       suggestedAssets: [],
       tokens: [],
-      usdConversionRate: 0,
     });
   });
 
@@ -106,7 +91,6 @@ describe('ComposableController', () => {
       new AddressBookController(),
       new AssetsController(),
       new AssetsContractController(),
-      new CurrencyRateController(),
       new EnsController(),
       new NetworkController(),
       new PreferencesController(),
@@ -134,9 +118,6 @@ describe('ComposableController', () => {
       collectibleContracts: [],
       collectibles: [],
       contractExchangeRates: {},
-      conversionDate: 0,
-      conversionRate: 0,
-      currentCurrency: 'usd',
       ensEntries: {},
       featureFlags: {},
       frequentRpcList: [],
@@ -145,13 +126,11 @@ describe('ComposableController', () => {
       ignoredTokens: [],
       ipfsGateway: 'https://ipfs.io/ipfs/',
       lostIdentities: {},
-      nativeCurrency: 'ETH',
       network: 'loading',
       provider: { type: 'mainnet', chainId: NetworksChainId.mainnet },
       selectedAddress: '',
       suggestedAssets: [],
       tokens: [],
-      usdConversionRate: 0,
     });
   });
 

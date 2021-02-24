@@ -2,7 +2,6 @@ import { toChecksumAddress } from 'ethereumjs-util';
 import BaseController, { BaseConfig, BaseState } from '../BaseController';
 import { safelyExecute, handleFetch } from '../util';
 import AssetsController from './AssetsController';
-import CurrencyRateController from './CurrencyRateController';
 
 /**
  * @type CoinGeckoResponse
@@ -80,7 +79,7 @@ export class TokenRatesController extends BaseController<TokenRatesConfig, Token
   /**
    * List of required sibling controllers this controller needs to function
    */
-  requiredControllers = ['AssetsController', 'CurrencyRateController'];
+  requiredControllers = ['AssetsController'];
 
   /**
    * Creates a TokenRatesController instance
@@ -143,12 +142,8 @@ export class TokenRatesController extends BaseController<TokenRatesConfig, Token
   onComposed() {
     super.onComposed();
     const assets = this.context.AssetsController as AssetsController;
-    const currencyRate = this.context.CurrencyRateController as CurrencyRateController;
     assets.subscribe(() => {
       this.configure({ tokens: assets.state.tokens });
-    });
-    currencyRate.subscribe(() => {
-      this.configure({ nativeCurrency: currencyRate.state.nativeCurrency });
     });
   }
 

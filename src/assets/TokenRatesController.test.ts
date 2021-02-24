@@ -6,7 +6,6 @@ import { NetworkController } from '../network/NetworkController';
 import TokenRatesController, { Token } from './TokenRatesController';
 import { AssetsController } from './AssetsController';
 import { AssetsContractController } from './AssetsContractController';
-import CurrencyRateController from './CurrencyRateController';
 
 const COINGECKO_HOST = 'https://api.coingecko.com';
 const COINGECKO_PATH = '/api/v3/simple/token_price/ethereum';
@@ -92,12 +91,11 @@ describe('TokenRatesController', () => {
   it('should update all rates', async () => {
     const assets = new AssetsController();
     const assetsContract = new AssetsContractController();
-    const currencyRate = new CurrencyRateController();
     const controller = new TokenRatesController({ interval: 10 });
     const network = new NetworkController();
     const preferences = new PreferencesController();
 
-    new ComposableController([controller, assets, assetsContract, currencyRate, network, preferences]);
+    new ComposableController([controller, assets, assetsContract, network, preferences]);
     const address = '0x89d24A6b4CcB1B6fAA2625fE562bDD9a23260359';
     const address2 = '0xfoO';
     expect(controller.state.contractExchangeRates).toEqual({});
@@ -125,17 +123,14 @@ describe('TokenRatesController', () => {
   it('should subscribe to new sibling assets controllers', async () => {
     const assets = new AssetsController();
     const assetsContract = new AssetsContractController();
-    const currencyRate = new CurrencyRateController();
     const controller = new TokenRatesController();
     const network = new NetworkController();
     const preferences = new PreferencesController();
 
-    new ComposableController([controller, assets, assetsContract, currencyRate, network, preferences]);
+    new ComposableController([controller, assets, assetsContract, network, preferences]);
     await assets.addToken('0xfoO', 'FOO', 18);
-    currencyRate.update({ nativeCurrency: 'gno' });
     const { tokens } = controller.context.AssetsController.state;
     const found = tokens.filter((token: Token) => token.address === '0xfoO');
     expect(found.length > 0).toBe(true);
-    expect(controller.config.nativeCurrency).toEqual('gno');
   });
 });
