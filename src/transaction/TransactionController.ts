@@ -425,6 +425,7 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
         return;
       }
       transactionMeta.status = 'approved';
+      /* istanbul ignore next */
       transactionMeta.transaction.nonce = transactionMeta.transaction?.nonce || await query(this.ethQuery, 'getTransactionCount', [from, 'pending']);
       transactionMeta.transaction.chainId = parseInt(currentChainId, undefined);
 
