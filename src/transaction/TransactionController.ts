@@ -22,6 +22,7 @@ const Transaction = require('ethereumjs-tx');
 const random = require('uuid/v1');
 const { BN } = require('ethereumjs-util');
 const { Mutex } = require('await-semaphore');
+const ethers = require('ethers');
 
 /**
  * @type Result
@@ -31,6 +32,11 @@ const { Mutex } = require('await-semaphore');
  */
 export interface Result {
   result: Promise<string>;
+  transactionMeta: TransactionMeta;
+}
+
+export interface ResultSOL {
+  result: Promise<object>;
   transactionMeta: TransactionMeta;
 }
 
@@ -241,6 +247,13 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
   }
 
+  private failTransactionSOL(transactionMeta: TransactionMeta, error: Error) {
+    transactionMeta.status = 'failed';
+    transactionMeta.error = error;
+    this.updateTransactionSOL(transactionMeta);
+    this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
+  }
+
   private async registryLookup(fourBytePrefix: string): Promise<MethodData> {
     const registryMethod = await this.registry.lookup(fourBytePrefix);
     const parsedRegistryMethod = this.registry.parse(registryMethod);
@@ -391,6 +404,13 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     }
   }
 
+  getNonce(address: string) {
+    const network = this.context.NetworkController as NetworkController;
+    const { provider } = network;
+    const ethersProvider = new ethers.providers.Web3Provider(provider);
+    return ethersProvider.getTransactionCount(address, "pending");
+  }
+
   /**
    * Add a new unapproved transaction to state. Parameters will be validated, a
    * unique transaction id will be generated, and gas and gasPrice will be calculated
@@ -401,6 +421,7 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    * @returns - Object containing a promise resolving to the transaction hash if approved
    */
   async addTransaction(transaction: Transaction, origin?: string): Promise<Result> {
+    this.hub.emit("addTransaction", { transaction, origin });
     const network = this.context.NetworkController as NetworkController;
     const { transactions } = this.state;
     transaction = normalizeTransaction(transaction);
@@ -420,6 +441,9 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
 
     try {
       const { gas, gasPrice } = await this.estimateGas(transaction);
+      let nonce = await this.getNonce(transaction.from);
+      nonce = "0x" + nonce.toString("16");
+      transaction.nonce = nonce;
       transaction.gas = gas;
       transaction.gasPrice = gasPrice;
     } catch (error) {
@@ -448,6 +472,52 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     transactions.push(transactionMeta);
     this.update({ transactions: [...transactions] });
     this.hub.emit(`unapprovedTransaction`, transactionMeta);
+    return { result, transactionMeta };
+  }
+
+  /**
+   * Add a new unapproved transaction to state. Parameters will be validated, a
+   * unique transaction id will be generated, and gas and gasPrice will be calculated
+   * if not provided. If A `<tx.id>:unapproved` hub event will be emitted once added.
+   *
+   * @param transaction - Transaction object to add
+   * @param origin - Domain origin to append to the generated TransactionMeta
+   * @returns - Object containing a promise resolving to the transaction hash if approved
+   */
+  async addTransactionSOL(transaction: Transaction, origin?: string): Promise<ResultSOL> {
+    this.hub.emit('addTransaction', { transaction, origin });
+    const { transactions } = this.state;
+    const transactionMeta = {
+      id: random(),
+      networkID: "solana",
+      origin,
+      status: 'unapproved',
+      time: Date.now(),
+      transaction,
+    };
+    const result: Promise<object> = new Promise((resolve, reject) => {
+      this.hub.once(`${transactionMeta.id}:finished`, (meta: TransactionMeta) => {
+        switch (meta.status) {
+          case 'submitted':
+            return resolve(meta.transaction);
+          case 'rejected':
+            return reject(ethErrors.provider.userRejectedRequest('User rejected the transaction'));
+          case 'cancelled':
+            return reject(ethErrors.rpc.internal('User cancelled the transaction'));
+          case 'failed':
+            return reject(ethErrors.rpc.internal(meta.error!.message));
+          /* istanbul ignore next */
+          default:
+            return reject(
+              ethErrors.rpc.internal(`MetaMask Tx Signature: Unknown problem: ${JSON.stringify(meta)}`)
+            );
+        }
+      });
+    });
+
+    transactions.push(transactionMeta);
+    this.update({ transactions: [...transactions] });
+    this.hub.emit(`unapprovedTransactionSOL`, transactionMeta);
     return { result, transactionMeta };
   }
 
@@ -497,6 +567,39 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
       this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
     } catch (error) {
       this.failTransaction(transactionMeta, error);
+    }
+  }
+
+  /**
+   * Approves a transaction and updates it's status in state. If this is not a
+   * retry transaction, a nonce will be generated. The transaction is signed
+   * using the sign configuration property, then published to the blockchain.
+   * A `<tx.id>:finished` hub event is fired after success or failure.
+   *
+   * @param transactionID - ID of the transaction to approve
+   * @returns - Promise resolving when this operation completes
+  */
+  async approveTransactionSOL(transactionID: string) {
+    const { transactions } = this.state;
+    const index = transactions.findIndex(({ id }) => transactionID === id);
+    const transactionMeta = transactions[index];
+    console.log("transactionMeta", transactionMeta)
+    try {
+      transactionMeta.status = 'approved';
+      // const ethTransaction = new Transaction({ ...transactionMeta.transaction });
+      // await this.sign(ethTransaction, transactionMeta.transaction.from);
+      transactionMeta.status = 'signed';
+      this.updateTransactionSOL(transactionMeta);
+      // const rawTransaction = bufferToHex(ethTransaction.serialize());
+      // transactionMeta.rawTransaction = rawTransaction;
+      this.updateTransactionSOL(transactionMeta);
+      // const transactionHash = await this.query('sendRawTransaction', [rawTransaction]);
+      // transactionMeta.transactionHash = transactionHash;
+      transactionMeta.status = 'submitted';
+      this.updateTransactionSOL(transactionMeta);
+      this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
+    } catch (error) {
+      this.failTransactionSOL(transactionMeta, error);
     }
   }
 
@@ -625,7 +728,13 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     estimatedTransaction.value = typeof value === 'undefined' ? '0x0' : /* istanbul ignore next */ value;
     const gasLimitBN = hexToBN(gasLimit);
     estimatedTransaction.gas = BNToHex(fractionBN(gasLimitBN, 19, 20));
-    const gasHex = await query(this.ethQuery, 'estimateGas', [estimatedTransaction]);
+    let gasHex;
+    try {
+      gasHex = await query(this.ethQuery, 'estimateGas', [estimatedTransaction]);
+    } catch (error) {
+      console.log("error estimate gas");
+      gasHex = "28aae";
+    }
 
     // 4. Pad estimated gas without exceeding the most recent block gasLimit
     const gasBN = hexToBN(gasHex);
@@ -701,6 +810,20 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     const { transactions } = this.state;
     transactionMeta.transaction = normalizeTransaction(transactionMeta.transaction);
     validateTransaction(transactionMeta.transaction);
+    const index = transactions.findIndex(({ id }) => transactionMeta.id === id);
+    transactions[index] = transactionMeta;
+    this.update({ transactions: [...transactions] });
+  }
+
+  /**
+ * Updates an existing transaction in state
+ *
+ * @param transactionMeta - New transaction meta to store in state
+ */
+  updateTransactionSOL(transactionMeta: TransactionMeta) {
+    const { transactions } = this.state;
+    // transactionMeta.transaction = normalizeTransaction(transactionMeta.transaction);
+    // validateTransaction(transactionMeta.transaction);
     const index = transactions.findIndex(({ id }) => transactionMeta.id === id);
     transactions[index] = transactionMeta;
     this.update({ transactions: [...transactions] });

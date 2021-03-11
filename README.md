@@ -1,4 +1,4 @@
-# `@metamask/controllers`
+# `@ezdefi/controllers`
 
 A collection of platform-agnostic modules for creating secure data models for cryptocurrency wallets.
 
@@ -21,7 +21,7 @@ A collection of platform-agnostic modules for creating secure data models for cr
 First, install the package.
 
 ```sh
-yarn add @metamask/controllers
+yarn add @ezdefi/controllers
 ```
 
 Then, compose stores to create a data model.
@@ -31,7 +31,7 @@ import {
   ComposableController,
   NetworkController,
   TokenRatesController,
-} from '@metamask/controllers';
+} from '@ezdefi/controllers';
 
 const datamodel = new ComposableController([
   new NetworkController(),
@@ -43,12 +43,12 @@ datamodel.subscribe((state) => {/* data model has changed */});
 
 ## Modules
 
-`@metamask/controllers` consists of a collection of controller modules that each expose uniform APIs for common operations like configuration, state management, and subscription.
+`@ezdefi/controllers` consists of a collection of controller modules that each expose uniform APIs for common operations like configuration, state management, and subscription.
 
 ### AccountTrackerController
 
 ```ts
-import AccountTrackerController from '@metamask/controllers';
+import AccountTrackerController from '@ezdefi/controllers';
 ```
 
 The AccountTrackerController tracks information associated with specific Ethereum accounts.
@@ -56,7 +56,7 @@ The AccountTrackerController tracks information associated with specific Ethereu
 ### AddressBookController
 
 ```ts
-import AddressBookController from '@metamask/controllers';
+import AddressBookController from '@ezdefi/controllers';
 ```
 
 The AddressBookController exposes functions for managing a list of recipient addresses and associated nicknames.
@@ -64,7 +64,7 @@ The AddressBookController exposes functions for managing a list of recipient add
 ### ComposableController
 
 ```ts
-import ComposableController from '@metamask/controllers';
+import ComposableController from '@ezdefi/controllers';
 ```
 
 The ComposableController can be used to compose multiple controllers together into a single controller.
@@ -72,7 +72,7 @@ The ComposableController can be used to compose multiple controllers together in
 ### CurrencyRateController
 
 ```ts
-import CurrencyRateController from '@metamask/controllers';
+import CurrencyRateController from '@ezdefi/controllers';
 ```
 
 The CurrencyRateController passively polls for an ETH-to-fiat exchange rate based on a chosen currency.
@@ -80,7 +80,7 @@ The CurrencyRateController passively polls for an ETH-to-fiat exchange rate base
 ### KeyringController
 
 ```ts
-import KeyringController from '@metamask/controllers';
+import KeyringController from '@ezdefi/controllers';
 ```
 
 The KeyringController is responsible for establishing and managing Ethereum address-based identities.
@@ -88,7 +88,7 @@ The KeyringController is responsible for establishing and managing Ethereum addr
 ### NetworkController
 
 ```ts
-import NetworkController from '@metamask/controllers';
+import NetworkController from '@ezdefi/controllers';
 ```
 
 The NetworkController is responsible for creating an underlying provider and for refreshing its configuration.
@@ -96,7 +96,7 @@ The NetworkController is responsible for creating an underlying provider and for
 ### PhishingController
 
 ```ts
-import PhishingController from '@metamask/controllers';
+import PhishingController from '@ezdefi/controllers';
 ```
 
 The PhishingController passively polls for community-maintained lists of approved and unapproved website origins.
@@ -104,7 +104,7 @@ The PhishingController passively polls for community-maintained lists of approve
 ### PreferencesController
 
 ```ts
-import PreferencesController from '@metamask/controllers';
+import PreferencesController from '@ezdefi/controllers';
 ```
 
 The PreferencesController manages agnostic global settings and exposes convenience methods for updating them.
@@ -112,7 +112,7 @@ The PreferencesController manages agnostic global settings and exposes convenien
 ### TokenRatesController
 
 ```ts
-import TokenRatesController from '@metamask/controllers';
+import TokenRatesController from '@ezdefi/controllers';
 ```
 
 The TokenRatesController passively polls on a set interval for token-to-fiat exchange rates.
@@ -120,7 +120,7 @@ The TokenRatesController passively polls on a set interval for token-to-fiat exc
 ### TransactionController
 
 ```ts
-import TransactionController from '@metamask/controllers';
+import TransactionController from '@ezdefi/controllers';
 ```
 
 The TransactionController is responsible for submitting and managing transactions.
@@ -128,14 +128,14 @@ The TransactionController is responsible for submitting and managing transaction
 ### util
 
 ```ts
-import util from '@metamask/controllers';
+import util from '@ezdefi/controllers';
 ```
 
 The util module exposes a set of utility functions for common operations like gas estimation and generating crypto-buying URLs.
 
 ## Concepts
 
-Using controllers should be straightforward since each controller exposes the same minimal API. The concepts detailed in this section form the entirety of the core API: knowing these concepts will allow you to fully use `@metamask/controllers` to build wallet data models.
+Using controllers should be straightforward since each controller exposes the same minimal API. The concepts detailed in this section form the entirety of the core API: knowing these concepts will allow you to fully use `@ezdefi/controllers` to build wallet data models.
 
 ### Initialization
 
@@ -224,7 +224,7 @@ import {
   ComposableController,
   NetworkController,
   TokenRatesController
-} from '@metamask/controllers';
+} from '@ezdefi/controllers';
 
 const datamodel = new ComposableController([
   new NetworkController(),
@@ -249,9 +249,9 @@ console.log(datamodel.flatState); // {infura: {...}, contractExchangeRates: [...
 
 ## Linking during development
 
-Linking `@metamask/controllers` into other projects involves a special NPM command to ensure that dependencies are not duplicated. This is because `@metamask/controllers` ships modules that are transpiled but not bundled, and [NPM does not deduplicate](https://github.com/npm/npm/issues/7742) linked dependency trees.
+Linking `@ezdefi/controllers` into other projects involves a special NPM command to ensure that dependencies are not duplicated. This is because `@ezdefi/controllers` ships modules that are transpiled but not bundled, and [NPM does not deduplicate](https://github.com/npm/npm/issues/7742) linked dependency trees.
 
-First, link `@metamask/controllers`.
+First, link `@ezdefi/controllers`.
 
 ```sh
 $ yarn build:link
@@ -262,14 +262,14 @@ $ npm run build:link
 Then, link into other projects.
 
 ```sh
-$ yarn link @metamask/controllers
+$ yarn link @ezdefi/controllers
 # or
-$ npm link @metamask/controllers
+$ npm link @ezdefi/controllers
 ```
 
 ## Release & Publishing
 
-The project follows the same release process as the other libraries in the MetaMask organization:
+The project follows the same release process as the other libraries in the ezdefi organization:
 
 1. Create a release branch
     - For a typical release, this would be based on `master`
@@ -284,9 +284,8 @@ The project follows the same release process as the other libraries in the MetaM
 
 ## API documentation
 
-API documentation is auto-generated for the `@metamask/controllers` package on every commit to the `master` branch.
+API documentation is auto-generated for the `@ezdefi/controllers` package on every commit to the `master` branch.
 
-[View API documentation](https://metamask.github.io/@metamask/controllers/)
 
 ## License
 

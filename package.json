@@ -1,5 +1,5 @@
 {
-  "name": "@metamask/controllers",
+  "name": "@ezdefi/controllers",
   "version": "6.0.1",
   "description": "Collection of platform-agnostic modules for creating secure data models for cryptocurrency wallets",
   "license": "MIT",
@@ -22,17 +22,17 @@
     "build:link": "yarn build && cd dist && yarn link && rm -rf node_modules && cd ..",
     "doc": "typedoc && touch docs/.nojekyll"
   },
-  "homepage": "https://github.com/MetaMask/controllers#readme",
+  "homepage": "https://github.com/ezDeFi/controllers#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MetaMask/controllers.git"
+    "url": "git+https://github.com/ezDeFi/controllers.git"
   },
   "keywords": [
-    "MetaMask",
+    "ezDeFi",
     "Ethereum"
   ],
   "bugs": {
-    "url": "https://github.com/MetaMask/controllers/issues"
+    "url": "https://github.com/ezDeFi/controllers/issues"
   },
   "dependencies": {
     "@metamask/contract-metadata": "^1.22.0",
@@ -58,6 +58,7 @@
     "web3-provider-engine": "^16.0.1"
   },
   "devDependencies": {
+    "ethers": "^4.0.48",
     "@metamask/eslint-config": "^3.0.0",
     "@types/fetch-mock": "^7.3.1",
     "@types/jest": "^22.2.3",
