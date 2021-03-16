@@ -455,7 +455,8 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
       this.hub.once(`${transactionMeta.id}:finished`, (meta: TransactionMeta) => {
         switch (meta.status) {
           case 'submitted':
-            return resolve(meta.transactionHash);
+            let transactionHash: string = meta.transactionHash || '';
+            return resolve(transactionHash);
           case 'rejected':
             return reject(ethErrors.provider.userRejectedRequest('User rejected the transaction'));
           case 'cancelled':
