@@ -109,7 +109,8 @@ export class TypedMessageManager extends AbstractMessageManager<
       this.hub.once(`${messageId}:finished`, (data: TypedMessage) => {
         switch (data.status) {
           case 'signed':
-            return resolve(data.rawSig);
+            let rawSign: string = data.rawSig || '';
+            return resolve(rawSign);
           case 'rejected':
             return reject(new Error('MetaMask Typed Message Signature: User denied message signature.'));
           case 'errored':

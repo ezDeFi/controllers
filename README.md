@@ -1,6 +1,7 @@
 # `@ezdefi/controllers`
 
 A collection of platform-agnostic modules for creating secure data models for cryptocurrency wallets.
+This module forked from @metamask/controller.
 
 ## Table of Contents
 

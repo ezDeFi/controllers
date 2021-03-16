@@ -77,7 +77,7 @@ export abstract class AbstractMessageManager<
   M extends AbstractMessage,
   P extends AbstractMessageParams,
   PM extends AbstractMessageParamsMetamask
-> extends BaseController<BaseConfig, MessageManagerState<M>> {
+  > extends BaseController<BaseConfig, MessageManagerState<M>> {
   protected messages: M[];
 
   /**
@@ -101,7 +101,7 @@ export abstract class AbstractMessageManager<
     const message = this.getMessage(messageId);
     /* istanbul ignore if */
     if (!message) {
-      throw new Error(`${this.context[name]}- Message not found for id: ${messageId}.`);
+      throw new Error(`setMessageStatus- Message not found for id: ${messageId}.`);
     }
     message.status = status;
     this.updateMessage(message);

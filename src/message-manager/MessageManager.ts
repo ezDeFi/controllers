@@ -76,7 +76,8 @@ export class MessageManager extends AbstractMessageManager<Message, MessageParam
       this.hub.once(`${messageId}:finished`, (data: Message) => {
         switch (data.status) {
           case 'signed':
-            return resolve(data.rawSig);
+            let rawSign: string = data.rawSig || '';
+            return resolve(rawSign);
           case 'rejected':
             return reject(new Error('MetaMask Message Signature: User denied message signature.'));
           default:
