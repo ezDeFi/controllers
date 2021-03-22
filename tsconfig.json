@@ -14,9 +14,10 @@
 		"sourceMap": true,
 		"inlineSources": true,
 		"strict": true,
-		"target": "es6"
-	},
-	"include": [
+		"target": "es6",
+    "skipLibCheck": true,
+  },
+  "include": [
 		"./src/**/*.ts"
 	]
 }

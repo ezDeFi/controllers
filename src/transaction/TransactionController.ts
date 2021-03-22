@@ -377,6 +377,7 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     interval && this.configure({ interval }, false, false);
     this.handle && clearTimeout(this.handle);
     await safelyExecute(() => this.queryTransactionStatuses());
+    // @ts-ignore
     this.handle = setTimeout(() => {
       this.poll(this.config.interval);
     }, this.config.interval);

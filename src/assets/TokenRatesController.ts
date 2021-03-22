@@ -111,6 +111,7 @@ export class TokenRatesController extends BaseController<TokenRatesConfig, Token
     interval && this.configure({ interval }, false, false);
     this.handle && clearTimeout(this.handle);
     await safelyExecute(() => this.updateExchangeRates());
+    // @ts-ignore
     this.handle = setTimeout(() => {
       this.poll(this.config.interval);
     }, this.config.interval);

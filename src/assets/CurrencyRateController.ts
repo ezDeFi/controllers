@@ -128,6 +128,7 @@ export class CurrencyRateController extends BaseController<CurrencyRateConfig, C
     interval && this.configure({ interval }, false, false);
     this.handle && clearTimeout(this.handle);
     await safelyExecute(() => this.updateExchangeRate());
+    // @ts-ignore
     this.handle = setTimeout(() => {
       this.poll(this.config.interval);
     }, this.config.interval);

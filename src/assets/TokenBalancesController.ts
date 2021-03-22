@@ -75,6 +75,7 @@ export class TokenBalancesController extends BaseController<TokenBalancesConfig,
     interval && this.configure({ interval }, false, false);
     this.handle && clearTimeout(this.handle);
     await safelyExecute(() => this.updateBalances());
+    // @ts-ignore
     this.handle = setTimeout(() => {
       this.poll(this.config.interval);
     }, this.config.interval);
