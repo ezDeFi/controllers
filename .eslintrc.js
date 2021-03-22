@@ -21,6 +21,7 @@ module.exports = {
     },
   }],
   rules: {
+    '@typescript-eslint/ban-ts-comment': 'off',
     'no-shadow': 'off',
     '@typescript-eslint/no-shadow': 'error',
     '@typescript-eslint/indent': 'off',

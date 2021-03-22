@@ -117,6 +117,7 @@ export class AssetsDetectionController extends BaseController<AssetsDetectionCon
     interval && this.configure({ interval }, false, false);
     this.handle && clearTimeout(this.handle);
     await this.detectAssets();
+    // @ts-ignore
     this.handle = setTimeout(() => {
       this.poll(this.config.interval);
     }, this.config.interval);

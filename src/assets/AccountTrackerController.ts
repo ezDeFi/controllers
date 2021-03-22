@@ -122,6 +122,7 @@ export class AccountTrackerController extends BaseController<AccountTrackerConfi
     interval && this.configure({ interval }, false, false);
     this.handle && clearTimeout(this.handle);
     await this.refresh();
+    // @ts-ignore
     this.handle = setTimeout(() => {
       releaseLock();
       this.poll(this.config.interval);

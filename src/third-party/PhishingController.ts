@@ -90,6 +90,7 @@ export class PhishingController extends BaseController<PhishingConfig, PhishingS
     interval && this.configure({ interval }, false, false);
     this.handle && clearTimeout(this.handle);
     await safelyExecute(() => this.updatePhishingLists());
+    // @ts-ignore
     this.handle = setTimeout(() => {
       this.poll(this.config.interval);
     }, this.config.interval);
