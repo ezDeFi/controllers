@@ -1,9 +1,8 @@
+import EthQuery from 'eth-query';
+import { Mutex } from 'async-mutex';
 import BaseController, { BaseConfig, BaseState } from '../BaseController';
-import PreferencesController from '../user/PreferencesController';
+import { PreferencesState } from '../user/PreferencesController';
 import { BNToHex, query, safelyExecuteWithTimeout } from '../util';
-
-const EthQuery = require('eth-query');
-const { Mutex } = require('async-mutex');
 
 /**
  * @type AccountInformation
@@ -42,7 +41,10 @@ export interface AccountTrackerState extends BaseState {
 /**
  * Controller that tracks information for all accounts in the current keychain
  */
-export class AccountTrackerController extends BaseController<AccountTrackerConfig, AccountTrackerState> {
+export class AccountTrackerController extends BaseController<
+  AccountTrackerConfig,
+  AccountTrackerState
+> {
   private ethQuery: any;
 
   private mutex = new Mutex();
@@ -50,14 +52,15 @@ export class AccountTrackerController extends BaseController<AccountTrackerConfi
   private handle?: NodeJS.Timer;
 
   private syncAccounts() {
-    const {
-      state: { identities },
-    } = this.context.PreferencesController as PreferencesController;
     const { accounts } = this.state;
-    const addresses = Object.keys(identities);
+    const addresses = Object.keys(this.getIdentities());
     const existing = Object.keys(accounts);
-    const newAddresses = addresses.filter((address) => existing.indexOf(address) === -1);
-    const oldAddresses = existing.filter((address) => addresses.indexOf(address) === -1);
+    const newAddresses = addresses.filter(
+      (address) => existing.indexOf(address) === -1,
+    );
+    const oldAddresses = existing.filter(
+      (address) => addresses.indexOf(address) === -1,
+    );
     newAddresses.forEach((address) => {
       accounts[address] = { balance: '0x0' };
     });
@@ -72,28 +75,47 @@ export class AccountTrackerController extends BaseController<AccountTrackerConfi
    */
   name = 'AccountTrackerController';
 
-  /**
-   * List of required sibling controllers this controller needs to function
-   */
-  requiredControllers = ['PreferencesController'];
+  private getIdentities: () => PreferencesState['identities'];
 
   /**
    * Creates an AccountTracker instance
    *
+   * @param options
+   * @param options.onPreferencesStateChange - Allows subscribing to preference controller state changes
+   * @param options.getIdentities - Gets the identities from the Preferences store
    * @param config - Initial options used to configure this controller
    * @param state - Initial state to set on this controller
    */
-  constructor(config?: Partial<AccountTrackerConfig>, state?: Partial<AccountTrackerState>) {
+  constructor(
+    {
+      onPreferencesStateChange,
+      getIdentities,
+    }: {
+      onPreferencesStateChange: (
+        listener: (preferencesState: PreferencesState) => void,
+      ) => void;
+      getIdentities: () => PreferencesState['identities'];
+    },
+    config?: Partial<AccountTrackerConfig>,
+    state?: Partial<AccountTrackerState>,
+  ) {
     super(config, state);
     this.defaultConfig = {
       interval: 10000,
     };
     this.defaultState = { accounts: {} };
     this.initialize();
+    this.getIdentities = getIdentities;
+    onPreferencesStateChange(() => {
+      this.refresh();
+    });
+    this.poll();
   }
 
   /**
    * Sets a new provider
+   *
+   * TODO: Replace this wth a method
    *
    * @param provider - Provider used to create a new underlying EthQuery instance
    */
@@ -101,15 +123,8 @@ export class AccountTrackerController extends BaseController<AccountTrackerConfi
     this.ethQuery = new EthQuery(provider);
   }
 
-  /**
-   * Extension point called if and when this controller is composed
-   * with other controllers using a ComposableController
-   */
-  onComposed() {
-    super.onComposed();
-    const preferences = this.context.PreferencesController as PreferencesController;
-    preferences.subscribe(this.refresh);
-    this.poll();
+  get provider() {
+    throw new Error('Property only used for setting');
   }
 
   /**

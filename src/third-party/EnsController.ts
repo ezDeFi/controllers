@@ -1,6 +1,9 @@
-import { isValidAddress, toChecksumAddress } from 'ethereumjs-util';
 import BaseController, { BaseConfig, BaseState } from '../BaseController';
-import { normalizeEnsName } from '../util';
+import {
+  normalizeEnsName,
+  isValidHexAddress,
+  toChecksumHexAddress,
+} from '../util';
 
 /**
  * @type EnsEntry
@@ -69,7 +72,11 @@ export class EnsController extends BaseController<BaseConfig, EnsState> {
    */
   delete(chainId: string, ensName: string): boolean {
     const normalizedEnsName = normalizeEnsName(ensName);
-    if (!normalizedEnsName || !this.state.ensEntries[chainId] || !this.state.ensEntries[chainId][normalizedEnsName]) {
+    if (
+      !normalizedEnsName ||
+      !this.state.ensEntries[chainId] ||
+      !this.state.ensEntries[chainId][normalizedEnsName]
+    ) {
       return false;
     }
 
@@ -118,9 +125,11 @@ export class EnsController extends BaseController<BaseConfig, EnsState> {
       !Number.isInteger(Number.parseInt(chainId, 10)) ||
       !ensName ||
       typeof ensName !== 'string' ||
-      (address && !isValidAddress(address))
+      (address && !isValidHexAddress(address))
     ) {
-      throw new Error(`Invalid ENS entry: { chainId:${chainId}, ensName:${ensName}, address:${address}}`);
+      throw new Error(
+        `Invalid ENS entry: { chainId:${chainId}, ensName:${ensName}, address:${address}}`,
+      );
     }
 
     const normalizedEnsName = normalizeEnsName(ensName);
@@ -128,10 +137,13 @@ export class EnsController extends BaseController<BaseConfig, EnsState> {
       throw new Error(`Invalid ENS name: ${ensName}`);
     }
 
-    const normalizedAddress = address ? toChecksumAddress(address) : null;
+    const normalizedAddress = address ? toChecksumHexAddress(address) : null;
     const subState = this.state.ensEntries[chainId];
 
-    if (subState && subState[normalizedEnsName] && subState[normalizedEnsName].address === normalizedAddress) {
+    if (
+      subState?.[normalizedEnsName] &&
+      subState[normalizedEnsName].address === normalizedAddress
+    ) {
       return false;
     }
 

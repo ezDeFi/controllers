@@ -1,4 +1,10 @@
-import { toChecksumAddress } from 'ethereumjs-util';
+import {
+  addHexPrefix,
+  bufferToHex,
+  isValidPrivate,
+  toBuffer,
+} from 'ethereumjs-util';
+import { stripHexPrefix } from 'ethjs-util';
 import {
   normalize as normalizeAddress,
   signTypedData,
@@ -6,15 +12,17 @@ import {
   signTypedDataLegacy,
 } from 'eth-sig-util';
 import Wallet, { thirdparty as importers } from 'ethereumjs-wallet';
-import BaseController, { BaseConfig, BaseState, Listener } from '../BaseController';
+import Keyring from 'eth-keyring-controller';
+import { Mutex } from 'async-mutex';
+import BaseController, {
+  BaseConfig,
+  BaseState,
+  Listener,
+} from '../BaseController';
 import PreferencesController from '../user/PreferencesController';
-import { Transaction } from '../transaction/TransactionController';
 import { PersonalMessageParams } from '../message-manager/PersonalMessageManager';
 import { TypedMessageParams } from '../message-manager/TypedMessageManager';
-
-const Keyring = require('eth-keyring-controller');
-const { Mutex } = require('async-mutex');
-const ethUtil = require('ethereumjs-util');
+import { toChecksumHexAddress } from '../util';
 
 const privates = new WeakMap();
 
@@ -96,9 +104,30 @@ export interface Keyring {
 }
 
 /**
+ * A strategy for importing an account
+ */
+export enum AccountImportStrategy {
+  privateKey = 'privateKey',
+  json = 'json',
+}
+
+/**
+ * The `signTypedMessage` version
+ * @see https://docs.metamask.io/guide/signing-data.html
+ */
+export enum SignTypedDataVersion {
+  V1 = 'V1',
+  V3 = 'V3',
+  V4 = 'V4',
+}
+
+/**
  * Controller responsible for establishing and managing user identity
  */
-export class KeyringController extends BaseController<KeyringConfig, KeyringState> {
+export class KeyringController extends BaseController<
+  KeyringConfig,
+  KeyringState
+> {
   private mutex = new Mutex();
 
   /**
@@ -106,24 +135,52 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    */
   name = 'KeyringController';
 
-  /**
-   * List of required sibling controllers this controller needs to function
-   */
-  requiredControllers = ['PreferencesController'];
+  private removeIdentity: PreferencesController['removeIdentity'];
+
+  private syncIdentities: PreferencesController['syncIdentities'];
+
+  private updateIdentities: PreferencesController['updateIdentities'];
+
+  private setSelectedAddress: PreferencesController['setSelectedAddress'];
 
   /**
    * Creates a KeyringController instance
    *
+   * @param options
+   * @param options.removeIdentity - Remove the identity with the given address
+   * @param options.syncIdentities - Sync identities with the given list of addresses
+   * @param options.updateIdentities - Generate an identity for each address given that doesn't already have an identity
+   * @param options.setSelectedAddress - Set the selected address
    * @param config - Initial options used to configure this controller
    * @param state - Initial state to set on this controller
    */
-  constructor(config?: Partial<KeyringConfig>, state?: Partial<KeyringState>) {
+  constructor(
+    {
+      removeIdentity,
+      syncIdentities,
+      updateIdentities,
+      setSelectedAddress,
+    }: {
+      removeIdentity: PreferencesController['removeIdentity'];
+      syncIdentities: PreferencesController['syncIdentities'];
+      updateIdentities: PreferencesController['updateIdentities'];
+      setSelectedAddress: PreferencesController['setSelectedAddress'];
+    },
+    config?: Partial<KeyringConfig>,
+    state?: Partial<KeyringState>,
+  ) {
     super(config, state);
-    privates.set(this, { keyring: new Keyring(Object.assign({ initState: state }, config)) });
+    privates.set(this, {
+      keyring: new Keyring(Object.assign({ initState: state }, config)),
+    });
     this.defaultState = {
       ...privates.get(this).keyring.store.getState(),
       keyrings: [],
     };
+    this.removeIdentity = removeIdentity;
+    this.syncIdentities = syncIdentities;
+    this.updateIdentities = updateIdentities;
+    this.setSelectedAddress = setSelectedAddress;
     this.initialize();
     this.fullUpdate();
   }
@@ -134,8 +191,9 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    * @returns - Promise resolving to current state when the account is added
    */
   async addNewAccount(): Promise<KeyringMemState> {
-    const preferences = this.context.PreferencesController as PreferencesController;
-    const primaryKeyring = privates.get(this).keyring.getKeyringsByType('HD Key Tree')[0];
+    const primaryKeyring = privates
+      .get(this)
+      .keyring.getKeyringsByType('HD Key Tree')[0];
     /* istanbul ignore if */
     if (!primaryKeyring) {
       throw new Error('No HD keyring found');
@@ -146,10 +204,10 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
 
     await this.verifySeedPhrase();
 
-    preferences.updateIdentities(newAccounts);
+    this.updateIdentities(newAccounts);
     newAccounts.forEach((selectedAddress: string) => {
       if (!oldAccounts.includes(selectedAddress)) {
-        preferences.update({ selectedAddress });
+        this.setSelectedAddress(selectedAddress);
       }
     });
     return this.fullUpdate();
@@ -161,7 +219,9 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    * @returns - Promise resolving to current state when the account is added
    */
   async addNewAccountWithoutUpdate(): Promise<KeyringMemState> {
-    const primaryKeyring = privates.get(this).keyring.getKeyringsByType('HD Key Tree')[0];
+    const primaryKeyring = privates
+      .get(this)
+      .keyring.getKeyringsByType('HD Key Tree')[0];
     /* istanbul ignore if */
     if (!primaryKeyring) {
       throw new Error('No HD keyring found');
@@ -180,13 +240,13 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    * @returns - Promise resolving to th restored keychain object
    */
   async createNewVaultAndRestore(password: string, seed: string) {
-    const preferences = this.context.PreferencesController as PreferencesController;
     const releaseLock = await this.mutex.acquire();
     try {
-      preferences.updateIdentities([]);
-      const vault = await privates.get(this).keyring.createNewVaultAndRestore(password, seed);
-      preferences.updateIdentities(await privates.get(this).keyring.getAccounts());
-      preferences.update({ selectedAddress: Object.keys(preferences.state.identities)[0] });
+      this.updateIdentities([]);
+      const vault = await privates
+        .get(this)
+        .keyring.createNewVaultAndRestore(password, seed);
+      this.updateIdentities(await privates.get(this).keyring.getAccounts());
       this.fullUpdate();
       return vault;
     } finally {
@@ -201,12 +261,12 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    * @returns - Newly-created keychain object
    */
   async createNewVaultAndKeychain(password: string) {
-    const preferences = this.context.PreferencesController as PreferencesController;
     const releaseLock = await this.mutex.acquire();
     try {
-      const vault = await privates.get(this).keyring.createNewVaultAndKeychain(password);
-      preferences.updateIdentities(await privates.get(this).keyring.getAccounts());
-      preferences.update({ selectedAddress: Object.keys(preferences.state.identities)[0] });
+      const vault = await privates
+        .get(this)
+        .keyring.createNewVaultAndKeychain(password);
+      this.updateIdentities(await privates.get(this).keyring.getAccounts());
       this.fullUpdate();
       return vault;
     } finally {
@@ -264,22 +324,26 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    *
    * @param strategy - Import strategy name
    * @param args - Array of arguments to pass to the underlying stategy
+   * @throws Will throw when passed an unrecognized strategy
    * @returns - Promise resolving to current state when the import is complete
    */
-  async importAccountWithStrategy(strategy: string, args: any[]): Promise<KeyringMemState> {
+  async importAccountWithStrategy(
+    strategy: AccountImportStrategy,
+    args: any[],
+  ): Promise<KeyringMemState> {
     let privateKey;
-    const preferences = this.context.PreferencesController as PreferencesController;
     switch (strategy) {
       case 'privateKey':
         const [importedKey] = args;
         if (!importedKey) {
           throw new Error('Cannot import an empty key.');
         }
-        const prefixed = ethUtil.addHexPrefix(importedKey);
-        if (!ethUtil.isValidPrivate(ethUtil.toBuffer(prefixed))) {
+        const prefixed = addHexPrefix(importedKey);
+        /* istanbul ignore if */
+        if (!isValidPrivate(toBuffer(prefixed))) {
           throw new Error('Cannot import invalid private key.');
         }
-        privateKey = ethUtil.stripHexPrefix(prefixed);
+        privateKey = stripHexPrefix(prefixed);
         break;
       case 'json':
         let wallet;
@@ -287,16 +351,20 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
         try {
           wallet = importers.fromEtherWallet(input, password);
         } catch (e) {
-          wallet = wallet || await Wallet.fromV3(input, password, true);
+          wallet = wallet || (await Wallet.fromV3(input, password, true));
         }
-        privateKey = ethUtil.bufferToHex(wallet.getPrivateKey());
+        privateKey = bufferToHex(wallet.getPrivateKey());
         break;
+      default:
+        throw new Error(`Unexpected import strategy: '${strategy}'`);
     }
-    const newKeyring = await privates.get(this).keyring.addNewKeyring(KeyringTypes.simple, [privateKey]);
+    const newKeyring = await privates
+      .get(this)
+      .keyring.addNewKeyring(KeyringTypes.simple, [privateKey]);
     const accounts = await newKeyring.getAccounts();
     const allAccounts = await privates.get(this).keyring.getAccounts();
-    preferences.updateIdentities(allAccounts);
-    preferences.update({ selectedAddress: accounts[0] });
+    this.updateIdentities(allAccounts);
+    this.setSelectedAddress(accounts[0]);
     return this.fullUpdate();
   }
 
@@ -307,8 +375,7 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    * @returns - Promise resolving current state when this account removal completes
    */
   async removeAccount(address: string): Promise<KeyringMemState> {
-    const preferences = this.context.PreferencesController as PreferencesController;
-    preferences.removeIdentity(address);
+    this.removeIdentity(address);
     await privates.get(this).keyring.removeAccount(address);
     return this.fullUpdate();
   }
@@ -347,24 +414,34 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    *
    * @param messageParams - TypedMessageParams object to sign
    * @param version - Compatibility version EIP712
+   * @throws Will throw when passed an unrecognized version
    * @returns - Promise resolving to a signed message string or an error if any
    */
-  async signTypedMessage(messageParams: TypedMessageParams, version: string) {
+  async signTypedMessage(
+    messageParams: TypedMessageParams,
+    version: SignTypedDataVersion,
+  ) {
     try {
       const address = normalizeAddress(messageParams.from);
       const { password } = privates.get(this).keyring;
       const privateKey = await this.exportAccount(password, address);
-      const privateKeyBuffer = ethUtil.toBuffer(ethUtil.addHexPrefix(privateKey));
+      const privateKeyBuffer = toBuffer(addHexPrefix(privateKey));
       switch (version) {
-        case 'V1':
+        case SignTypedDataVersion.V1:
           // signTypedDataLegacy will throw if the data is invalid.
-          return signTypedDataLegacy(privateKeyBuffer, { data: messageParams.data as any });
-        case 'V3':
-          return signTypedData(privateKeyBuffer, { data: JSON.parse(messageParams.data as string) });
-        case 'V4':
+          return signTypedDataLegacy(privateKeyBuffer, {
+            data: messageParams.data as any,
+          });
+        case SignTypedDataVersion.V3:
+          return signTypedData(privateKeyBuffer, {
+            data: JSON.parse(messageParams.data as string),
+          });
+        case SignTypedDataVersion.V4:
           return signTypedData_v4(privateKeyBuffer, {
             data: JSON.parse(messageParams.data as string),
           });
+        default:
+          throw new Error(`Unexpected signTypedMessage version: '${version}'`);
       }
     } catch (error) {
       throw new Error(`Keyring Controller signTypedMessage: ${error}`);
@@ -374,11 +451,11 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
   /**
    * Signs a transaction by calling down into a specific keyring
    *
-   * @param transaction - Transaction object to sign
+   * @param transaction - Transaction object to sign. Must be a `ethereumjs-tx` transaction instance.
    * @param from - Address to sign from, should be in keychain
    * @returns - Promise resolving to a signed transaction string
    */
-  signTransaction(transaction: Transaction, from: string) {
+  signTransaction(transaction: unknown, from: string) {
     return privates.get(this).keyring.signTransaction(transaction, from);
   }
 
@@ -389,10 +466,9 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    * @returns - Promise resolving to the current state
    */
   async submitPassword(password: string): Promise<KeyringMemState> {
-    const preferences = this.context.PreferencesController as PreferencesController;
     await privates.get(this).keyring.submitPassword(password);
     const accounts = await privates.get(this).keyring.getAccounts();
-    await preferences.syncIdentities(accounts);
+    await this.syncIdentities(accounts);
     return this.fullUpdate();
   }
 
@@ -441,7 +517,9 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
    * @returns - Promise resolving if the verification succeeds
    */
   async verifySeedPhrase(): Promise<string> {
-    const primaryKeyring = privates.get(this).keyring.getKeyringsByType(KeyringTypes.hd)[0];
+    const primaryKeyring = privates
+      .get(this)
+      .keyring.getKeyringsByType(KeyringTypes.hd)[0];
     /* istanbul ignore if */
     if (!primaryKeyring) {
       throw new Error('No HD keyring found.');
@@ -454,8 +532,13 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
       throw new Error('Cannot verify an empty keyring.');
     }
 
-    const TestKeyringClass = privates.get(this).keyring.getKeyringClassForType(KeyringTypes.hd);
-    const testKeyring = new TestKeyringClass({ mnemonic: seedWords, numberOfAccounts: accounts.length });
+    const TestKeyringClass = privates
+      .get(this)
+      .keyring.getKeyringClassForType(KeyringTypes.hd);
+    const testKeyring = new TestKeyringClass({
+      mnemonic: seedWords,
+      numberOfAccounts: accounts.length,
+    });
     const testAccounts = await testKeyring.getAccounts();
     /* istanbul ignore if */
     if (testAccounts.length !== accounts.length) {
@@ -483,7 +566,7 @@ export class KeyringController extends BaseController<KeyringConfig, KeyringStat
         async (keyring: KeyringObject, index: number): Promise<Keyring> => {
           const keyringAccounts = await keyring.getAccounts();
           const accounts = Array.isArray(keyringAccounts)
-            ? keyringAccounts.map((address) => toChecksumAddress(address))
+            ? keyringAccounts.map((address) => toChecksumHexAddress(address))
             : /* istanbul ignore next */ [];
           return {
             accounts,

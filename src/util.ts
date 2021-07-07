@@ -1,15 +1,25 @@
-import { addHexPrefix, isValidAddress, bufferToHex } from 'ethereumjs-util';
+import {
+  addHexPrefix,
+  isValidAddress,
+  isHexString,
+  bufferToHex,
+  BN,
+  toChecksumAddress,
+} from 'ethereumjs-util';
+import { stripHexPrefix } from 'ethjs-util';
 import { ethErrors } from 'eth-rpc-errors';
+import ensNamehash from 'eth-ens-namehash';
 import { TYPED_MESSAGE_SCHEMA, typedSignatureHash } from 'eth-sig-util';
-import { Transaction, FetchAllOptions } from './transaction/TransactionController';
+import jsonschema from 'jsonschema';
+import {
+  Transaction,
+  FetchAllOptions,
+} from './transaction/TransactionController';
 import { MessageParams } from './message-manager/MessageManager';
 import { PersonalMessageParams } from './message-manager/PersonalMessageManager';
 import { TypedMessageParams } from './message-manager/TypedMessageManager';
 import { Token } from './assets/TokenRatesController';
-
-const jsonschema = require('jsonschema');
-const { BN, stripHexPrefix } = require('ethereumjs-util');
-const ensNamehash = require('eth-ens-namehash');
+import { MAINNET } from './constants';
 
 const hexRe = /^[0-9A-Fa-f]+$/gu;
 
@@ -42,7 +52,11 @@ export function BNToHex(inputBn: any) {
  * @param denominator - Denominator of the fraction multiplier
  * @returns - Product of the multiplication
  */
-export function fractionBN(targetBN: any, numerator: number | string, denominator: number | string) {
+export function fractionBN(
+  targetBN: any,
+  numerator: number | string,
+  denominator: number | string,
+) {
   const numBN = new BN(numerator);
   const denomBN = new BN(denominator);
   return targetBN.mul(numBN).div(denomBN);
@@ -56,7 +70,11 @@ export function fractionBN(targetBN: any, numerator: number | string, denominato
  * @param amount - How much ETH is desired
  * @returns - URL to buy ETH based on network
  */
-export function getBuyURL(networkCode = '1', address?: string, amount = 5) {
+export function getBuyURL(
+  networkCode = '1',
+  address?: string,
+  amount = 5,
+): string | undefined {
   switch (networkCode) {
     case '1':
       return `https://buy.coinbase.com/?code=9ec56d01-7e81-5017-930c-513daa27bb6a&amount=${amount}&address=${address}&crypto_currency=ETH`;
@@ -68,6 +86,8 @@ export function getBuyURL(networkCode = '1', address?: string, amount = 5) {
       return 'https://goerli-faucet.slock.it/';
     case '42':
       return 'https://github.com/kovan-testnet/faucet';
+    default:
+      return undefined;
   }
 }
 
@@ -87,7 +107,7 @@ export function getEtherscanApiUrl(
   etherscanApiKey?: string,
 ): string {
   let etherscanSubdomain = 'api';
-  if (networkType !== 'mainnet') {
+  if (networkType !== MAINNET) {
     etherscanSubdomain = `api-${networkType}`;
   }
   const apiUrl = `https://${etherscanSubdomain}.etherscan.io`;
@@ -119,8 +139,8 @@ export async function handleTransactionFetch(
     networkType,
     address,
     'txlist',
-    opt && opt.fromBlock,
-    opt && opt.etherscanApiKey,
+    opt?.fromBlock,
+    opt?.etherscanApiKey,
   );
   const etherscanTxResponsePromise = handleFetch(etherscanTxUrl);
 
@@ -129,8 +149,8 @@ export async function handleTransactionFetch(
     networkType,
     address,
     'tokentx',
-    opt && opt.fromBlock,
-    opt && opt.etherscanApiKey,
+    opt?.fromBlock,
+    opt?.etherscanApiKey,
   );
   const etherscanTokenResponsePromise = handleFetch(etherscanTokenUrl);
 
@@ -139,11 +159,17 @@ export async function handleTransactionFetch(
     etherscanTokenResponsePromise,
   ]);
 
-  if (etherscanTxResponse.status === '0' || etherscanTxResponse.result.length <= 0) {
+  if (
+    etherscanTxResponse.status === '0' ||
+    etherscanTxResponse.result.length <= 0
+  ) {
     etherscanTxResponse = { result: [] };
   }
 
-  if (etherscanTokenResponse.status === '0' || etherscanTokenResponse.result.length <= 0) {
+  if (
+    etherscanTokenResponse.status === '0' ||
+    etherscanTokenResponse.result.length <= 0
+  ) {
     etherscanTokenResponse = { result: [] };
   }
 
@@ -204,7 +230,11 @@ export function normalizeTransaction(transaction: Transaction) {
  * @param retry - Function called if an error is caught
  * @returns - Promise resolving to the result of the async operation
  */
-export async function safelyExecute(operation: () => Promise<any>, logError = false, retry?: (error: Error) => void) {
+export async function safelyExecute(
+  operation: () => Promise<any>,
+  logError = false,
+  retry?: (error: Error) => void,
+) {
   try {
     return await operation();
   } catch (error) {
@@ -212,7 +242,8 @@ export async function safelyExecute(operation: () => Promise<any>, logError = fa
     if (logError) {
       console.error(error);
     }
-    retry && retry(error);
+    retry?.(error);
+    return undefined;
   }
 }
 
@@ -225,7 +256,11 @@ export async function safelyExecute(operation: () => Promise<any>, logError = fa
  * @param timeout - Timeout to fail the operation
  * @returns - Promise resolving to the result of the async operation
  */
-export async function safelyExecuteWithTimeout(operation: () => Promise<any>, logError = false, timeout = 500) {
+export async function safelyExecuteWithTimeout(
+  operation: () => Promise<any>,
+  logError = false,
+  timeout = 500,
+) {
   try {
     return await Promise.race([
       operation(),
@@ -240,7 +275,48 @@ export async function safelyExecuteWithTimeout(operation: () => Promise<any>, lo
     if (logError) {
       console.error(error);
     }
+    return undefined;
   }
+}
+
+export function toChecksumHexAddress(address: string) {
+  const hexPrefixed = addHexPrefix(address);
+  if (!isHexString(hexPrefixed)) {
+    // Version 5.1 of ethereumjs-utils would have returned '0xY' for input 'y'
+    // but we shouldn't waste effort trying to change case on a clearly invalid
+    // string. Instead just return the hex prefixed original string which most
+    // closely mimics the original behavior.
+    return hexPrefixed;
+  }
+  return toChecksumAddress(hexPrefixed);
+}
+
+/**
+ * Validates that the input is a hex address. This utility method is a thin
+ * wrapper around ethereumjs-util.isValidAddress, with the exception that it
+ * does not throw an error when provided values that are not hex strings. In
+ * addition, and by default, this method will return true for hex strings that
+ * meet the length requirement of a hex address, but are not prefixed with `0x`
+ * Finally, if the mixedCaseUseChecksum flag is true and a mixed case string is
+ * provided this method will validate it has the proper checksum formatting.
+ * @param {string} possibleAddress - Input parameter to check against
+ * @param {Object} [options] - options bag
+ * @param {boolean} [options.allowNonPrefixed] - If true will first ensure '0x'
+ *  is prepended to the string
+ * @returns {boolean} whether or not the input is a valid hex address
+ */
+export function isValidHexAddress(
+  possibleAddress: string,
+  { allowNonPrefixed = true } = {},
+) {
+  const addressToCheck = allowNonPrefixed
+    ? addHexPrefix(possibleAddress)
+    : possibleAddress;
+  if (!isHexString(addressToCheck)) {
+    return false;
+  }
+
+  return isValidAddress(addressToCheck);
 }
 
 /**
@@ -250,17 +326,30 @@ export async function safelyExecuteWithTimeout(operation: () => Promise<any>, lo
  * @param transaction - Transaction object to validate
  */
 export function validateTransaction(transaction: Transaction) {
-  if (!transaction.from || typeof transaction.from !== 'string' || !isValidAddress(transaction.from)) {
-    throw new Error(`Invalid "from" address: ${transaction.from} must be a valid string.`);
+  if (
+    !transaction.from ||
+    typeof transaction.from !== 'string' ||
+    !isValidHexAddress(transaction.from)
+  ) {
+    throw new Error(
+      `Invalid "from" address: ${transaction.from} must be a valid string.`,
+    );
   }
   if (transaction.to === '0x' || transaction.to === undefined) {
     if (transaction.data) {
       delete transaction.to;
     } else {
-      throw new Error(`Invalid "to" address: ${transaction.to} must be a valid string.`);
+      throw new Error(
+        `Invalid "to" address: ${transaction.to} must be a valid string.`,
+      );
     }
-  } else if (transaction.to !== undefined && !isValidAddress(transaction.to)) {
-    throw new Error(`Invalid "to" address: ${transaction.to} must be a valid string.`);
+  } else if (
+    transaction.to !== undefined &&
+    !isValidHexAddress(transaction.to)
+  ) {
+    throw new Error(
+      `Invalid "to" address: ${transaction.to} must be a valid string.`,
+    );
   }
   if (transaction.value !== undefined) {
     const value = transaction.value.toString();
@@ -268,13 +357,20 @@ export function validateTransaction(transaction: Transaction) {
       throw new Error(`Invalid "value": ${value} is not a positive number.`);
     }
     if (value.includes('.')) {
-      throw new Error(`Invalid "value": ${value} number must be denominated in wei.`);
+      throw new Error(
+        `Invalid "value": ${value} number must be denominated in wei.`,
+      );
     }
     const intValue = parseInt(transaction.value, 10);
     const isValid =
-      Number.isFinite(intValue) && !Number.isNaN(intValue) && !isNaN(Number(value)) && Number.isSafeInteger(intValue);
+      Number.isFinite(intValue) &&
+      !Number.isNaN(intValue) &&
+      !isNaN(Number(value)) &&
+      Number.isSafeInteger(intValue);
     if (!isValid) {
-      throw new Error(`Invalid "value": ${value} number must be a valid number.`);
+      throw new Error(
+        `Invalid "value": ${value} number must be a valid number.`,
+      );
     }
   }
 }
@@ -305,12 +401,15 @@ export function normalizeMessageData(data: string) {
  *
  * @param messageData - PersonalMessageParams object to validate
  */
-export function validateSignMessageData(messageData: PersonalMessageParams | MessageParams) {
-  if (!messageData.from || typeof messageData.from !== 'string' || !isValidAddress(messageData.from)) {
-    throw new Error(`Invalid "from" address: ${messageData.from} must be a valid string.`);
+export function validateSignMessageData(
+  messageData: PersonalMessageParams | MessageParams,
+) {
+  const { from, data } = messageData;
+  if (!from || typeof from !== 'string' || !isValidHexAddress(from)) {
+    throw new Error(`Invalid "from" address: ${from} must be a valid string.`);
   }
-  if (!messageData.data || typeof messageData.data !== 'string') {
-    throw new Error(`Invalid message "data": ${messageData.data} must be a valid string.`);
+  if (!data || typeof data !== 'string') {
+    throw new Error(`Invalid message "data": ${data} must be a valid string.`);
   }
 }
 
@@ -321,12 +420,22 @@ export function validateSignMessageData(messageData: PersonalMessageParams | Mes
  * @param messageData - TypedMessageParams object to validate
  * @param activeChainId - Active chain id
  */
-export function validateTypedSignMessageDataV1(messageData: TypedMessageParams) {
-  if (!messageData.from || typeof messageData.from !== 'string' || !isValidAddress(messageData.from)) {
-    throw new Error(`Invalid "from" address: ${messageData.from} must be a valid string.`);
+export function validateTypedSignMessageDataV1(
+  messageData: TypedMessageParams,
+) {
+  if (
+    !messageData.from ||
+    typeof messageData.from !== 'string' ||
+    !isValidHexAddress(messageData.from)
+  ) {
+    throw new Error(
+      `Invalid "from" address: ${messageData.from} must be a valid string.`,
+    );
   }
   if (!messageData.data || !Array.isArray(messageData.data)) {
-    throw new Error(`Invalid message "data": ${messageData.data} must be a valid array.`);
+    throw new Error(
+      `Invalid message "data": ${messageData.data} must be a valid array.`,
+    );
   }
   try {
     // typedSignatureHash will throw if the data is invalid.
@@ -342,12 +451,22 @@ export function validateTypedSignMessageDataV1(messageData: TypedMessageParams) 
  *
  * @param messageData - TypedMessageParams object to validate
  */
-export function validateTypedSignMessageDataV3(messageData: TypedMessageParams) {
-  if (!messageData.from || typeof messageData.from !== 'string' || !isValidAddress(messageData.from)) {
-    throw new Error(`Invalid "from" address: ${messageData.from} must be a valid string.`);
+export function validateTypedSignMessageDataV3(
+  messageData: TypedMessageParams,
+) {
+  if (
+    !messageData.from ||
+    typeof messageData.from !== 'string' ||
+    !isValidHexAddress(messageData.from)
+  ) {
+    throw new Error(
+      `Invalid "from" address: ${messageData.from} must be a valid string.`,
+    );
   }
   if (!messageData.data || typeof messageData.data !== 'string') {
-    throw new Error(`Invalid message "data": ${messageData.data} must be a valid array.`);
+    throw new Error(
+      `Invalid message "data": ${messageData.data} must be a valid array.`,
+    );
   }
   let data;
   try {
@@ -357,7 +476,9 @@ export function validateTypedSignMessageDataV3(messageData: TypedMessageParams) 
   }
   const validation = jsonschema.validate(data, TYPED_MESSAGE_SCHEMA);
   if (validation.errors.length > 0) {
-    throw new Error('Data must conform to EIP-712 schema. See https://git.io/fNtcx.');
+    throw new Error(
+      'Data must conform to EIP-712 schema. See https://git.io/fNtcx.',
+    );
   }
 }
 
@@ -369,19 +490,25 @@ export function validateTypedSignMessageDataV3(messageData: TypedMessageParams) 
 export function validateTokenToWatch(token: Token) {
   const { address, symbol, decimals } = token;
   if (!address || !symbol || typeof decimals === 'undefined') {
-    throw ethErrors.rpc.invalidParams(`Must specify address, symbol, and decimals.`);
+    throw ethErrors.rpc.invalidParams(
+      `Must specify address, symbol, and decimals.`,
+    );
   }
   if (typeof symbol !== 'string') {
     throw ethErrors.rpc.invalidParams(`Invalid symbol: not a string.`);
   }
-  if (symbol.length > 6) {
-    throw ethErrors.rpc.invalidParams(`Invalid symbol "${symbol}": longer than 6 characters.`);
+  if (symbol.length > 11) {
+    throw ethErrors.rpc.invalidParams(
+      `Invalid symbol "${symbol}": longer than 11 characters.`,
+    );
   }
   const numDecimals = parseInt((decimals as unknown) as string, 10);
   if (isNaN(numDecimals) || numDecimals > 36 || numDecimals < 0) {
-    throw ethErrors.rpc.invalidParams(`Invalid decimals "${decimals}": must be 0 <= 36.`);
+    throw ethErrors.rpc.invalidParams(
+      `Invalid decimals "${decimals}": must be 0 <= 36.`,
+    );
   }
-  if (!isValidAddress(address)) {
+  if (!isValidHexAddress(address)) {
     throw ethErrors.rpc.invalidParams(`Invalid address "${address}".`);
   }
 }
@@ -411,7 +538,9 @@ export function isSmartContractCode(code: string) {
 export async function successfulFetch(request: string, options?: RequestInit) {
   const response = await fetch(request, options);
   if (!response.ok) {
-    throw new Error(`Fetch failed with status '${response.status}' for request '${request}'`);
+    throw new Error(
+      `Fetch failed with status '${response.status}' for request '${request}'`,
+    );
   }
   return response;
 }
@@ -438,7 +567,11 @@ export async function handleFetch(request: string, options?: RequestInit) {
  *
  * @returns - Promise resolving the request
  */
-export async function timeoutFetch(url: string, options?: RequestInit, timeout = 500): Promise<Response> {
+export async function timeoutFetch(
+  url: string,
+  options?: RequestInit,
+  timeout = 500,
+): Promise<Response> {
   return Promise.race([
     successfulFetch(url, options),
     new Promise<Response>((_, reject) =>
@@ -462,8 +595,7 @@ export function normalizeEnsName(ensName: string): string | null {
       const normalized = ensNamehash.normalize(ensName.trim());
       // this regex is only sufficient with the above call to ensNamehash.normalize
       // TODO: change 7 in regex to 3 when shorter ENS domains are live
-      // eslint-disable-next-line require-unicode-regexp
-      if (normalized.match(/^(([\w\d\-]+)\.)*[\w\d\-]{7,}\.(eth|test)$/)) {
+      if (normalized.match(/^(([\w\d-]+)\.)*[\w\d-]{7,}\.(eth|test)$/u)) {
         return normalized;
       }
     } catch (_) {
@@ -482,7 +614,11 @@ export function normalizeEnsName(ensName: string): string | null {
  *
  * @returns - Promise resolving the request
  */
-export function query(ethQuery: any, method: string, args: any[] = []): Promise<any> {
+export function query(
+  ethQuery: any,
+  method: string,
+  args: any[] = [],
+): Promise<any> {
   return new Promise((resolve, reject) => {
     ethQuery[method](...args, (error: Error, result: any) => {
       if (error) {

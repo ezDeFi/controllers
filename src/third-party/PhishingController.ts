@@ -1,8 +1,8 @@
+import punycode from 'punycode/';
+import DEFAULT_PHISHING_RESPONSE from 'eth-phishing-detect/src/config.json';
+import PhishingDetector from 'eth-phishing-detect/src/detector';
 import BaseController, { BaseConfig, BaseState } from '../BaseController';
 import { safelyExecute } from '../util';
-
-const DEFAULT_PHISHING_RESPONSE = require('eth-phishing-detect/src/config.json');
-const PhishingDetector = require('eth-phishing-detect/src/detector');
 
 /**
  * @type EthPhishingResponse
@@ -51,8 +51,12 @@ export interface PhishingState extends BaseState {
 /**
  * Controller that passively polls on a set interval for approved and unapproved website origins
  */
-export class PhishingController extends BaseController<PhishingConfig, PhishingState> {
-  private configUrl = 'https://cdn.jsdelivr.net/gh/MetaMask/eth-phishing-detect@master/src/config.json';
+export class PhishingController extends BaseController<
+  PhishingConfig,
+  PhishingState
+> {
+  private configUrl =
+    'https://cdn.jsdelivr.net/gh/MetaMask/eth-phishing-detect@master/src/config.json';
 
   private detector: any;
 
@@ -69,7 +73,10 @@ export class PhishingController extends BaseController<PhishingConfig, PhishingS
    * @param config - Initial options used to configure this controller
    * @param state - Initial state to set on this controller
    */
-  constructor(config?: Partial<PhishingConfig>, state?: Partial<PhishingState>) {
+  constructor(
+    config?: Partial<PhishingConfig>,
+    state?: Partial<PhishingState>,
+  ) {
     super(config, state);
     this.defaultConfig = { interval: 60 * 60 * 1000 };
     this.defaultState = {
@@ -102,21 +109,23 @@ export class PhishingController extends BaseController<PhishingConfig, PhishingS
    * @returns - True if the origin is an unapproved origin
    */
   test(origin: string): boolean {
-    if (this.state.whitelist.indexOf(origin) !== -1) {
+    const punycodeOrigin = punycode.toASCII(origin);
+    if (this.state.whitelist.indexOf(punycodeOrigin) !== -1) {
       return false;
     }
-    return this.detector.check(origin).result;
+    return this.detector.check(punycodeOrigin).result;
   }
 
   /**
    * Temporarily marks a given origin as approved
    */
   bypass(origin: string) {
+    const punycodeOrigin = punycode.toASCII(origin);
     const { whitelist } = this.state;
-    if (whitelist.indexOf(origin) !== -1) {
+    if (whitelist.indexOf(punycodeOrigin) !== -1) {
       return;
     }
-    this.update({ whitelist: [...whitelist, origin] });
+    this.update({ whitelist: [...whitelist, punycodeOrigin] });
   }
 
   /**
@@ -138,7 +147,9 @@ export class PhishingController extends BaseController<PhishingConfig, PhishingS
     }
   }
 
-  private async queryConfig(input: RequestInfo): Promise<EthPhishingResponse | null> {
+  private async queryConfig(
+    input: RequestInfo,
+  ): Promise<EthPhishingResponse | null> {
     const response = await fetch(input, { cache: 'no-cache' });
 
     switch (response.status) {
@@ -150,7 +161,9 @@ export class PhishingController extends BaseController<PhishingConfig, PhishingS
         return null;
       }
       default: {
-        throw new Error(`Fetch failed with status '${response.status}' for request '${input}'`);
+        throw new Error(
+          `Fetch failed with status '${response.status}' for request '${input}'`,
+        );
       }
     }
   }

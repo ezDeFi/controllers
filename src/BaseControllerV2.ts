@@ -4,6 +4,11 @@ import { enablePatches, produceWithPatches } from 'immer';
 // eslint-disable-next-line no-duplicate-imports
 import type { Draft, Patch } from 'immer';
 
+import type {
+  RestrictedControllerMessenger,
+  Namespaced,
+} from './ControllerMessenger';
+
 enablePatches();
 
 /**
@@ -92,27 +97,78 @@ export interface StatePropertyMetadata<T> {
   anonymous: boolean | StateDeriver<T>;
 }
 
-type Json = null | boolean | number | string | Json[] | { [prop: string]: Json };
+export type Json =
+  | null
+  | boolean
+  | number
+  | string
+  | Json[]
+  | { [prop: string]: Json };
+
 /**
  * Controller class that provides state management, subscriptions, and state metadata
  */
-export class BaseController<S extends Record<string, unknown>> {
+export class BaseController<
+  N extends string,
+  S extends Record<string, unknown>
+> {
   private internalState: IsJsonable<S>;
 
-  private internalListeners: Set<Listener<S>> = new Set();
+  protected messagingSystem: RestrictedControllerMessenger<
+    N,
+    any,
+    any,
+    string,
+    string
+  >;
+
+  /**
+   * The name of the controller.
+   *
+   * This is used by the ComposableController to construct a composed application state.
+   */
+  public readonly name: N;
 
   public readonly metadata: StateMetadata<S>;
 
   /**
+   * The existence of the `subscribe` property is how the ComposableController detects whether a
+   * controller extends the old BaseController or the new one. We set it to `never` here to ensure
+   * this property is never used for new BaseController-based controllers, to ensure the
+   * ComposableController never mistakes them for an older style controller.
+   */
+  public readonly subscribe: never;
+
+  /**
    * Creates a BaseController instance.
    *
-   * @param state - Initial controller state
-   * @param metadata - State metadata, describing how to "anonymize" the state,
-   *   and which parts should be persisted.
+   * @param options
+   * @param options.messenger - Controller messaging system
+   * @param options.metadata - State metadata, describing how to "anonymize" the state, and which
+   *   parts should be persisted.
+   * @param options.name - The name of the controller, used as a namespace for events and actions
+   * @param options.state - Initial controller state
    */
-  constructor(state: IsJsonable<S>, metadata: StateMetadata<S>) {
+  constructor({
+    messenger,
+    metadata,
+    name,
+    state,
+  }: {
+    messenger: RestrictedControllerMessenger<N, any, any, string, string>;
+    metadata: StateMetadata<S>;
+    name: N;
+    state: IsJsonable<S>;
+  }) {
+    this.messagingSystem = messenger;
+    this.name = name;
     this.internalState = state;
     this.metadata = metadata;
+
+    this.messagingSystem.registerActionHandler(
+      `${name}:getState`,
+      () => this.state,
+    );
   }
 
   /**
@@ -125,25 +181,9 @@ export class BaseController<S extends Record<string, unknown>> {
   }
 
   set state(_) {
-    throw new Error(`Controller state cannot be directly mutated; use 'update' method instead.`);
-  }
-
-  /**
-   * Adds new listener to be notified of state changes
-   *
-   * @param listener - Callback triggered when state changes
-   */
-  subscribe(listener: Listener<S>) {
-    this.internalListeners.add(listener);
-  }
-
-  /**
-   * Removes existing listener from receiving state changes
-   *
-   * @param listener - Callback to remove
-   */
-  unsubscribe(listener: Listener<S>) {
-    this.internalListeners.delete(listener);
+    throw new Error(
+      `Controller state cannot be directly mutated; use 'update' method instead.`,
+    );
   }
 
   /**
@@ -155,12 +195,19 @@ export class BaseController<S extends Record<string, unknown>> {
    * @param callback - Callback for updating state, passed a draft state
    *   object. Return a new state object or mutate the draft to update state.
    */
-  protected update(callback: (state: Draft<IsJsonable<S>>) => void | IsJsonable<S>) {
-    const [nextState, patches] = produceWithPatches(this.internalState, callback);
+  protected update(
+    callback: (state: Draft<IsJsonable<S>>) => void | IsJsonable<S>,
+  ) {
+    const [nextState, patches] = produceWithPatches(
+      this.internalState,
+      callback,
+    );
     this.internalState = nextState as IsJsonable<S>;
-    for (const listener of this.internalListeners) {
-      listener(nextState as S, patches);
-    }
+    this.messagingSystem.publish(
+      `${this.name}:stateChange` as Namespaced<N, any>,
+      nextState as S,
+      patches,
+    );
   }
 
   /**
@@ -173,7 +220,9 @@ export class BaseController<S extends Record<string, unknown>> {
    * listeners from being garbage collected.
    */
   protected destroy() {
-    this.internalListeners.clear();
+    this.messagingSystem.clearEventSubscriptions(
+      `${this.name}:stateChange` as Namespaced<N, any>,
+    );
   }
 }
 

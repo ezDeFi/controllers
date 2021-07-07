@@ -1,5 +1,5 @@
-import { toChecksumAddress } from 'ethereumjs-util';
 import BaseController, { BaseConfig, BaseState } from '../BaseController';
+import { toChecksumHexAddress } from '../util';
 import { ContactEntry } from './AddressBookController';
 
 /**
@@ -51,7 +51,10 @@ export interface PreferencesState extends BaseState {
 /**
  * Controller that stores shared settings and exposes convenience methods
  */
-export class PreferencesController extends BaseController<BaseConfig, PreferencesState> {
+export class PreferencesController extends BaseController<
+  BaseConfig,
+  PreferencesState
+> {
   /**
    * Name of this controller used during composition
    */
@@ -84,13 +87,17 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
   addIdentities(addresses: string[]) {
     const { identities } = this.state;
     addresses.forEach((address) => {
-      address = toChecksumAddress(address);
+      address = toChecksumHexAddress(address);
       if (identities[address]) {
         return;
       }
       const identityCount = Object.keys(identities).length;
 
-      identities[address] = { name: `Account ${identityCount + 1}`, address };
+      identities[address] = {
+        name: `Account ${identityCount + 1}`,
+        address,
+        importTime: Date.now(),
+      };
     });
     this.update({ identities: { ...identities } });
   }
@@ -101,7 +108,7 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
    * @param address - Address of the identity to remove
    */
   removeIdentity(address: string) {
-    address = toChecksumAddress(address);
+    address = toChecksumHexAddress(address);
     const { identities } = this.state;
     if (!identities[address]) {
       return;
@@ -120,7 +127,7 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
    * @param label - New label to assign
    */
   setAccountLabel(address: string, label: string) {
-    address = toChecksumAddress(address);
+    address = toChecksumHexAddress(address);
     const { identities } = this.state;
     identities[address] = identities[address] || {};
     identities[address].name = label;
@@ -146,7 +153,9 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
    * @returns - Newly-selected address after syncing
    */
   syncIdentities(addresses: string[]) {
-    addresses = addresses.map((address: string) => toChecksumAddress(address));
+    addresses = addresses.map((address: string) =>
+      toChecksumHexAddress(address),
+    );
     const { identities, lostIdentities } = this.state;
     const newlyLost: { [address: string]: ContactEntry } = {};
 
@@ -163,7 +172,10 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
       }
     }
 
-    this.update({ identities: { ...identities }, lostIdentities: { ...lostIdentities } });
+    this.update({
+      identities: { ...identities },
+      lostIdentities: { ...lostIdentities },
+    });
     this.addIdentities(addresses);
 
     if (addresses.indexOf(this.state.selectedAddress) === -1) {
@@ -174,21 +186,33 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
   }
 
   /**
-   * Generates and stores a new list of stored identities based on address
+   * Generates and stores a new list of stored identities based on address. If the selected address
+   * is unset, or if it refers to an identity that was removed, it will be set to the first
+   * identity.
    *
    * @param addresses - List of addresses to use as a basis for each identity
    */
   updateIdentities(addresses: string[]) {
-    addresses = addresses.map((address: string) => toChecksumAddress(address));
+    addresses = addresses.map((address: string) =>
+      toChecksumHexAddress(address),
+    );
     const oldIdentities = this.state.identities;
-    const identities = addresses.reduce((ids: { [address: string]: ContactEntry }, address, index) => {
-      ids[address] = oldIdentities[address] || {
-        address,
-        name: `Account ${index + 1}`,
-      };
-      return ids;
-    }, {});
-    this.update({ identities: { ...identities } });
+    const identities = addresses.reduce(
+      (ids: { [address: string]: ContactEntry }, address, index) => {
+        ids[address] = oldIdentities[address] || {
+          address,
+          name: `Account ${index + 1}`,
+          importTime: Date.now(),
+        };
+        return ids;
+      },
+      {},
+    );
+    let { selectedAddress } = this.state;
+    if (!Object.keys(identities).includes(selectedAddress)) {
+      selectedAddress = Object.keys(identities)[0];
+    }
+    this.update({ identities: { ...identities }, selectedAddress });
   }
 
   /**
@@ -201,7 +225,13 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
    * @param rpcPrefs? - Personalized preferences
    *
    */
-  addToFrequentRpcList(url: string, chainId?: number, ticker?: string, nickname?: string, rpcPrefs?: RpcPreferences) {
+  addToFrequentRpcList(
+    url: string,
+    chainId?: number,
+    ticker?: string,
+    nickname?: string,
+    rpcPrefs?: RpcPreferences,
+  ) {
     const { frequentRpcList } = this.state;
     const index = frequentRpcList.findIndex(({ rpcUrl }) => {
       return rpcUrl === url;
@@ -209,7 +239,13 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
     if (index !== -1) {
       frequentRpcList.splice(index, 1);
     }
-    const newFrequestRpc: FrequentRpc = { rpcUrl: url, chainId, ticker, nickname, rpcPrefs };
+    const newFrequestRpc: FrequentRpc = {
+      rpcUrl: url,
+      chainId,
+      ticker,
+      nickname,
+      rpcPrefs,
+    };
     frequentRpcList.push(newFrequestRpc);
     this.update({ frequentRpcList: [...frequentRpcList] });
   }
@@ -236,7 +272,7 @@ export class PreferencesController extends BaseController<BaseConfig, Preference
    * @param selectedAddress - Ethereum address
    */
   setSelectedAddress(selectedAddress: string) {
-    this.update({ selectedAddress: toChecksumAddress(selectedAddress) });
+    this.update({ selectedAddress: toChecksumHexAddress(selectedAddress) });
   }
 
   /**

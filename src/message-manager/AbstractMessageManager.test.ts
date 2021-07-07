@@ -5,8 +5,14 @@ import {
 } from './TypedMessageManager';
 import AbstractMessageManager from './AbstractMessageManager';
 
-class AbstractTestManager extends AbstractMessageManager<TypedMessage, TypedMessageParams, TypedMessageParamsMetamask> {
-  prepMessageForSigning(messageParams: TypedMessageParamsMetamask): Promise<TypedMessageParams> {
+class AbstractTestManager extends AbstractMessageManager<
+  TypedMessage,
+  TypedMessageParams,
+  TypedMessageParamsMetamask
+> {
+  prepMessageForSigning(
+    messageParams: TypedMessageParamsMetamask,
+  ): Promise<TypedMessageParams> {
     delete messageParams.metamaskId;
     delete messageParams.version;
     return Promise.resolve(messageParams);
@@ -38,12 +44,15 @@ const messageData = typedMessage;
 describe('AbstractTestManager', () => {
   it('should set default state', () => {
     const controller = new AbstractTestManager();
-    expect(controller.state).toEqual({ unapprovedMessages: {}, unapprovedMessagesCount: 0 });
+    expect(controller.state).toStrictEqual({
+      unapprovedMessages: {},
+      unapprovedMessagesCount: 0,
+    });
   });
 
   it('should set default config', () => {
     const controller = new AbstractTestManager();
-    expect(controller.config).toEqual({});
+    expect(controller.config).toStrictEqual({});
   });
 
   it('should add a valid message', async () => {
@@ -59,15 +68,15 @@ describe('AbstractTestManager', () => {
       type: messageType,
     });
     const message = controller.getMessage(messageId);
-    expect(message).not.toBeUndefined();
-    if (message) {
-      expect(message.id).toBe(messageId);
-      expect(message.messageParams.from).toBe(from);
-      expect(message.messageParams.data).toBe(messageData);
-      expect(message.time).toBe(messageTime);
-      expect(message.status).toBe(messageStatus);
-      expect(message.type).toBe(messageType);
+    if (!message) {
+      throw new Error('"message" is falsy');
     }
+    expect(message.id).toBe(messageId);
+    expect(message.messageParams.from).toBe(from);
+    expect(message.messageParams.data).toBe(messageData);
+    expect(message.time).toBe(messageTime);
+    expect(message.status).toBe(messageStatus);
+    expect(message.type).toBe(messageType);
   });
 
   it('should reject a message', () => {
@@ -84,10 +93,10 @@ describe('AbstractTestManager', () => {
     });
     controller.rejectMessage(messageId);
     const message = controller.getMessage(messageId);
-    expect(message).not.toBeUndefined();
-    if (message) {
-      expect(message.status).toBe('rejected');
+    if (!message) {
+      throw new Error('"message" is falsy');
     }
+    expect(message.status).toBe('rejected');
   });
 
   it('should sign a message', () => {
@@ -104,11 +113,11 @@ describe('AbstractTestManager', () => {
     });
     controller.setMessageStatusSigned(messageId, 'rawSig');
     const message = controller.getMessage(messageId);
-    expect(message).not.toBeUndefined();
-    if (message) {
-      expect(message.status).toBe('signed');
-      expect(message.rawSig).toBe('rawSig');
+    if (!message) {
+      throw new Error('"message" is falsy');
     }
+    expect(message.status).toBe('signed');
+    expect(message.rawSig).toBe('rawSig');
   });
 
   it('should get correct unapproved messages', () => {
@@ -153,8 +162,8 @@ describe('AbstractTestManager', () => {
     const controller = new AbstractTestManager();
     controller.addMessage(firstMessage);
     controller.addMessage(secondMessage);
-    expect(controller.getUnapprovedMessagesCount()).toEqual(2);
-    expect(controller.getUnapprovedMessages()).toEqual({
+    expect(controller.getUnapprovedMessagesCount()).toStrictEqual(2);
+    expect(controller.getUnapprovedMessages()).toStrictEqual({
       [firstMessage.id]: firstMessage,
       [secondMessage.id]: secondMessage,
     });
@@ -171,13 +180,17 @@ describe('AbstractTestManager', () => {
       time: messageTime,
       type: messageType,
     });
-    const messageParams = await controller.approveMessage({ ...firstMessage, metamaskId: messageId, version });
+    const messageParams = await controller.approveMessage({
+      ...firstMessage,
+      metamaskId: messageId,
+      version,
+    });
     const message = controller.getMessage(messageId);
-    expect(messageParams).toEqual(firstMessage);
-    expect(message).not.toBeUndefined();
-    if (message) {
-      expect(message.status).toEqual('approved');
+    expect(messageParams).toStrictEqual(firstMessage);
+    if (!message) {
+      throw new Error('"message" is falsy');
     }
+    expect(message.status).toStrictEqual('approved');
   });
 
   describe('setMessageStatus', () => {
@@ -191,17 +204,19 @@ describe('AbstractTestManager', () => {
         type: 'type',
       });
       const messageBefore = controller.getMessage(messageId);
-      expect(messageBefore && messageBefore.status).toEqual('status');
+      expect(messageBefore?.status).toStrictEqual('status');
 
       controller.setMessageStatus(messageId, 'newstatus');
       const messageAfter = controller.getMessage(messageId);
-      expect(messageAfter && messageAfter.status).toEqual('newstatus');
+      expect(messageAfter?.status).toStrictEqual('newstatus');
     });
 
     it('should throw an error if message is not found', () => {
       const controller = new AbstractTestManager();
 
-      expect(() => controller.setMessageStatus(messageId, 'newstatus')).toThrow('AbstractMessageManager: Message not found for id: 1.');
+      expect(() => controller.setMessageStatus(messageId, 'newstatus')).toThrow(
+        'AbstractMessageManager: Message not found for id: 1.',
+      );
     });
   });
 });

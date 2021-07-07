@@ -1,5 +1,8 @@
-import { isValidAddress, toChecksumAddress } from 'ethereumjs-util';
-import { normalizeEnsName } from '../util';
+import {
+  normalizeEnsName,
+  isValidHexAddress,
+  toChecksumHexAddress,
+} from '../util';
 import BaseController, { BaseConfig, BaseState } from '../BaseController';
 
 /**
@@ -9,10 +12,12 @@ import BaseController, { BaseConfig, BaseState } from '../BaseController';
  *
  * @property address - Hex address of a recipient account
  * @property name - Nickname associated with this address
+ * @property importTime - Data time when an account as created/imported
  */
 export interface ContactEntry {
   address: string;
   name: string;
+  importTime?: number;
 }
 
 /**
@@ -48,7 +53,10 @@ export interface AddressBookState extends BaseState {
 /**
  * Controller that manages a list of recipient addresses associated with nicknames
  */
-export class AddressBookController extends BaseController<BaseConfig, AddressBookState> {
+export class AddressBookController extends BaseController<
+  BaseConfig,
+  AddressBookState
+> {
   /**
    * Name of this controller used during composition
    */
@@ -82,8 +90,12 @@ export class AddressBookController extends BaseController<BaseConfig, AddressBoo
    * @param address - Recipient address to delete
    */
   delete(chainId: string, address: string) {
-    address = toChecksumAddress(address);
-    if (!isValidAddress(address) || !this.state.addressBook[chainId] || !this.state.addressBook[chainId][address]) {
+    address = toChecksumHexAddress(address);
+    if (
+      !isValidHexAddress(address) ||
+      !this.state.addressBook[chainId] ||
+      !this.state.addressBook[chainId][address]
+    ) {
       return false;
     }
 
@@ -108,8 +120,8 @@ export class AddressBookController extends BaseController<BaseConfig, AddressBoo
    * @returns - Boolean indicating if the address was successfully set
    */
   set(address: string, name: string, chainId = '1', memo = '') {
-    address = toChecksumAddress(address);
-    if (!isValidAddress(address)) {
+    address = toChecksumHexAddress(address);
+    if (!isValidHexAddress(address)) {
       return false;
     }
 

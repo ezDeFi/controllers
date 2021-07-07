@@ -1,16 +1,14 @@
+import { BN } from 'ethereumjs-util';
+import Web3 from 'web3';
+import abiERC20 from 'human-standard-token-abi';
+import abiERC721 from 'human-standard-collectible-abi';
+import abiSingleCallBalancesContract from 'single-call-balance-checker-abi';
 import BaseController, { BaseConfig, BaseState } from '../BaseController';
-
-// TODO: Destructuring this line introduces a compilation error
-// eslint-disable-next-line prefer-destructuring
-const BN = require('ethereumjs-util').BN;
-const Web3 = require('web3');
-const abiERC20 = require('human-standard-token-abi');
-const abiERC721 = require('human-standard-collectible-abi');
-const abiSingleCallBalancesContract = require('single-call-balance-checker-abi');
 
 const ERC721METADATA_INTERFACE_ID = '0x5b5e139f';
 const ERC721ENUMERABLE_INTERFACE_ID = '0x780e9d63';
-const SINGLE_CALL_BALANCES_ADDRESS = '0xb1f8e55c7f64d203c1400b9d8555d050f94adf39';
+const SINGLE_CALL_BALANCES_ADDRESS =
+  '0xb1f8e55c7f64d203c1400b9d8555d050f94adf39';
 
 /**
  * @type AssetsContractConfig
@@ -31,13 +29,16 @@ export interface AssetsContractConfig extends BaseConfig {
  * @property [tokenAddress] - Address of the token
  */
 export interface BalanceMap {
-  [tokenAddress: string]: string;
+  [tokenAddress: string]: BN;
 }
 
 /**
  * Controller that interacts with contracts on mainnet through web3
  */
-export class AssetsContractController extends BaseController<AssetsContractConfig, BaseState> {
+export class AssetsContractController extends BaseController<
+  AssetsContractConfig,
+  BaseState
+> {
   private web3: any;
 
   /**
@@ -48,17 +49,23 @@ export class AssetsContractController extends BaseController<AssetsContractConfi
    * @param interfaceId - Interface identifier
    * @returns - Promise resolving to whether the contract implements `interfaceID`
    */
-  private async contractSupportsInterface(address: string, interfaceId: string): Promise<boolean> {
+  private async contractSupportsInterface(
+    address: string,
+    interfaceId: string,
+  ): Promise<boolean> {
     const contract = this.web3.eth.contract(abiERC721).at(address);
     return new Promise<boolean>((resolve, reject) => {
-      contract.supportsInterface(interfaceId, (error: Error, result: boolean) => {
-        /* istanbul ignore if */
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(result);
-      });
+      contract.supportsInterface(
+        interfaceId,
+        (error: Error, result: boolean) => {
+          /* istanbul ignore if */
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(result);
+        },
+      );
     });
   }
 
@@ -73,7 +80,10 @@ export class AssetsContractController extends BaseController<AssetsContractConfi
    * @param config - Initial options used to configure this controller
    * @param state - Initial state to set on this controller
    */
-  constructor(config?: Partial<AssetsContractConfig>, state?: Partial<BaseState>) {
+  constructor(
+    config?: Partial<AssetsContractConfig>,
+    state?: Partial<BaseState>,
+  ) {
     super(config, state);
     this.defaultConfig = {
       provider: undefined,
@@ -84,10 +94,16 @@ export class AssetsContractController extends BaseController<AssetsContractConfi
   /**
    * Sets a new provider
    *
+   * TODO: Replace this wth a method
+   *
    * @property provider - Provider used to create a new underlying Web3 instance
    */
   set provider(provider: any) {
     this.web3 = new Web3(provider);
+  }
+
+  get provider() {
+    throw new Error('Property only used for setting');
   }
 
   /**
@@ -107,7 +123,10 @@ export class AssetsContractController extends BaseController<AssetsContractConfi
    * @returns - Promise resolving to whether the contract implements ERC721Enumerable interface
    */
   async contractSupportsEnumerableInterface(address: string): Promise<boolean> {
-    return this.contractSupportsInterface(address, ERC721ENUMERABLE_INTERFACE_ID);
+    return this.contractSupportsInterface(
+      address,
+      ERC721ENUMERABLE_INTERFACE_ID,
+    );
   }
 
   /**
@@ -117,10 +136,10 @@ export class AssetsContractController extends BaseController<AssetsContractConfi
    * @param selectedAddress - Current account public address
    * @returns - Promise resolving to BN object containing balance for current account on specific asset contract
    */
-  async getBalanceOf(address: string, selectedAddress: string): Promise<typeof BN> {
+  async getBalanceOf(address: string, selectedAddress: string): Promise<BN> {
     const contract = this.web3.eth.contract(abiERC20).at(address);
-    return new Promise<typeof BN>((resolve, reject) => {
-      contract.balanceOf(selectedAddress, (error: Error, result: typeof BN) => {
+    return new Promise<BN>((resolve, reject) => {
+      contract.balanceOf(selectedAddress, (error: Error, result: BN) => {
         /* istanbul ignore if */
         if (error) {
           reject(error);
@@ -139,17 +158,25 @@ export class AssetsContractController extends BaseController<AssetsContractConfi
    * @param index - A collectible counter less than `balanceOf(selectedAddress)`
    * @returns - Promise resolving to token identifier for the 'index'th asset assigned to 'selectedAddress'
    */
-  getCollectibleTokenId(address: string, selectedAddress: string, index: number): Promise<number> {
+  getCollectibleTokenId(
+    address: string,
+    selectedAddress: string,
+    index: number,
+  ): Promise<number> {
     const contract = this.web3.eth.contract(abiERC721).at(address);
     return new Promise<number>((resolve, reject) => {
-      contract.tokenOfOwnerByIndex(selectedAddress, index, (error: Error, result: typeof BN) => {
-        /* istanbul ignore if */
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(result.toNumber());
-      });
+      contract.tokenOfOwnerByIndex(
+        selectedAddress,
+        index,
+        (error: Error, result: BN) => {
+          /* istanbul ignore if */
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve(result.toNumber());
+        },
+      );
     });
   }
 
@@ -160,7 +187,16 @@ export class AssetsContractController extends BaseController<AssetsContractConfi
    * @param tokenId - ERC721 asset identifier
    * @returns - Promise resolving to the 'tokenURI'
    */
-  async getCollectibleTokenURI(address: string, tokenId: number): Promise<string> {
+  async getCollectibleTokenURI(
+    address: string,
+    tokenId: number,
+  ): Promise<string> {
+    const supportsMetadata = await this.contractSupportsMetadataInterface(
+      address,
+    );
+    if (!supportsMetadata) {
+      return '';
+    }
     const contract = this.web3.eth.contract(abiERC721).at(address);
     return new Promise<string>((resolve, reject) => {
       contract.tokenURI(tokenId, (error: Error, result: string) => {
@@ -260,28 +296,37 @@ export class AssetsContractController extends BaseController<AssetsContractConfi
    *
    * @returns - Promise resolving to the 'tokenURI'
    */
-  async getBalancesInSingleCall(selectedAddress: string, tokensToDetect: string[]) {
-    const contract = this.web3.eth.contract(abiSingleCallBalancesContract).at(SINGLE_CALL_BALANCES_ADDRESS);
+  async getBalancesInSingleCall(
+    selectedAddress: string,
+    tokensToDetect: string[],
+  ) {
+    const contract = this.web3.eth
+      .contract(abiSingleCallBalancesContract)
+      .at(SINGLE_CALL_BALANCES_ADDRESS);
     return new Promise<BalanceMap>((resolve, reject) => {
-      contract.balances([selectedAddress], tokensToDetect, (error: Error, result: typeof BN[]) => {
-        /* istanbul ignore if */
-        if (error) {
-          reject(error);
-          return;
-        }
-        const nonZeroBalances: BalanceMap = {};
-        /* istanbul ignore else */
-        if (result.length > 0) {
-          tokensToDetect.forEach((tokenAddress, index) => {
-            const balance: typeof BN = result[index];
-            /* istanbul ignore else */
-            if (!balance.isZero()) {
-              nonZeroBalances[tokenAddress] = balance;
-            }
-          });
-        }
-        resolve(nonZeroBalances);
-      });
+      contract.balances(
+        [selectedAddress],
+        tokensToDetect,
+        (error: Error, result: BN[]) => {
+          /* istanbul ignore if */
+          if (error) {
+            reject(error);
+            return;
+          }
+          const nonZeroBalances: BalanceMap = {};
+          /* istanbul ignore else */
+          if (result.length > 0) {
+            tokensToDetect.forEach((tokenAddress, index) => {
+              const balance: BN = result[index];
+              /* istanbul ignore else */
+              if (!balance.isZero()) {
+                nonZeroBalances[tokenAddress] = balance;
+              }
+            });
+          }
+          resolve(nonZeroBalances);
+        },
+      );
     });
   }
 }

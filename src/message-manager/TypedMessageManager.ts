@@ -1,12 +1,14 @@
-import { validateTypedSignMessageDataV3, validateTypedSignMessageDataV1 } from '../util';
+import { v1 as random } from 'uuid';
+import {
+  validateTypedSignMessageDataV3,
+  validateTypedSignMessageDataV1,
+} from '../util';
 import AbstractMessageManager, {
   AbstractMessage,
   AbstractMessageParams,
   AbstractMessageParamsMetamask,
   OriginalRequest,
 } from './AbstractMessageManager';
-
-const random = require('uuid').v1;
 
 /**
  * @type TypedMessage
@@ -59,7 +61,8 @@ export interface TypedMessageParams extends AbstractMessageParams {
  * @property origin? - Added for request origin identification
  * @property version - Compatibility version EIP712
  */
-export interface TypedMessageParamsMetamask extends AbstractMessageParamsMetamask {
+export interface TypedMessageParamsMetamask
+  extends AbstractMessageParamsMetamask {
   data: Record<string, unknown>[] | string;
   metamaskId?: string;
   error?: string;
@@ -78,11 +81,6 @@ export class TypedMessageManager extends AbstractMessageManager<
    * Name of this controller used during composition
    */
   name = 'TypedMessageManager';
-
-  /**
-   * List of required sibling controllers this controller needs to function
-   */
-  requiredControllers = ['NetworkController'];
 
   /**
    * Creates a new TypedMessage with an 'unapproved' status using the passed messageParams.
@@ -111,12 +109,22 @@ export class TypedMessageManager extends AbstractMessageManager<
           case 'signed':
             return resolve(data.rawSig as string);
           case 'rejected':
-            return reject(new Error('MetaMask Typed Message Signature: User denied message signature.'));
+            return reject(
+              new Error(
+                'MetaMask Typed Message Signature: User denied message signature.',
+              ),
+            );
           case 'errored':
-            return reject(new Error(`MetaMask Typed Message Signature: ${data.error}`));
+            return reject(
+              new Error(`MetaMask Typed Message Signature: ${data.error}`),
+            );
           default:
             return reject(
-              new Error(`MetaMask Typed Message Signature: Unknown problem: ${JSON.stringify(messageParams)}`),
+              new Error(
+                `MetaMask Typed Message Signature: Unknown problem: ${JSON.stringify(
+                  messageParams,
+                )}`,
+              ),
             );
         }
       });
@@ -134,9 +142,17 @@ export class TypedMessageManager extends AbstractMessageManager<
    * @param req? - The original request object possibly containing the origin
    * @returns - The id of the newly created TypedMessage
    */
-  addUnapprovedMessage(messageParams: TypedMessageParams, version: string, req?: OriginalRequest) {
+  addUnapprovedMessage(
+    messageParams: TypedMessageParams,
+    version: string,
+    req?: OriginalRequest,
+  ) {
     const messageId = random();
-    const messageParamsMetamask = { ...messageParams, metamaskId: messageId, version };
+    const messageParamsMetamask = {
+      ...messageParams,
+      metamaskId: messageId,
+      version,
+    };
     if (req) {
       messageParams.origin = req.origin;
     }
@@ -176,7 +192,9 @@ export class TypedMessageManager extends AbstractMessageManager<
    * @param messageParams - The messageParams to modify
    * @returns - Promise resolving to the messageParams with the metamaskId and version properties removed
    */
-  prepMessageForSigning(messageParams: TypedMessageParamsMetamask): Promise<TypedMessageParams> {
+  prepMessageForSigning(
+    messageParams: TypedMessageParamsMetamask,
+  ): Promise<TypedMessageParams> {
     delete messageParams.metamaskId;
     delete messageParams.version;
     return Promise.resolve(messageParams);

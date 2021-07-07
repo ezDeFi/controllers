@@ -1,4 +1,4 @@
-import * as nock from 'nock';
+import nock from 'nock';
 
 import { fetchExchangeRate } from './crypto-compare';
 
@@ -24,20 +24,7 @@ describe('CryptoCompare', () => {
 
     const { conversionRate } = await fetchExchangeRate('CAD', 'ETH');
 
-    expect(conversionRate).toEqual(2000.42);
-  });
-
-  it('should return conversion date', async () => {
-    nock(cryptoCompareHost)
-      .get('/data/price?fsym=ETH&tsyms=CAD')
-      .reply(200, { CAD: 2000.42 });
-
-    const before = Date.now() / 1000;
-    const { conversionDate } = await fetchExchangeRate('CAD', 'ETH');
-    const after = Date.now() / 1000;
-
-    expect(conversionDate).toBeGreaterThanOrEqual(before);
-    expect(conversionDate).toBeLessThanOrEqual(after);
+    expect(conversionRate).toStrictEqual(2000.42);
   });
 
   it('should return CAD conversion rate given lower-cased currency', async () => {
@@ -47,7 +34,7 @@ describe('CryptoCompare', () => {
 
     const { conversionRate } = await fetchExchangeRate('cad', 'ETH');
 
-    expect(conversionRate).toEqual(2000.42);
+    expect(conversionRate).toStrictEqual(2000.42);
   });
 
   it('should return CAD conversion rate given lower-cased native currency', async () => {
@@ -57,7 +44,7 @@ describe('CryptoCompare', () => {
 
     const { conversionRate } = await fetchExchangeRate('CAD', 'eth');
 
-    expect(conversionRate).toEqual(2000.42);
+    expect(conversionRate).toStrictEqual(2000.42);
   });
 
   it('should not return USD conversion rate when fetching just CAD conversion rate', async () => {
@@ -67,7 +54,7 @@ describe('CryptoCompare', () => {
 
     const { usdConversionRate } = await fetchExchangeRate('CAD', 'ETH');
 
-    expect(usdConversionRate).toBeFalsy();
+    expect(usdConversionRate).toBeNaN();
   });
 
   it('should return USD conversion rate for USD even when includeUSD is disabled', async () => {
@@ -75,10 +62,14 @@ describe('CryptoCompare', () => {
       .get('/data/price?fsym=ETH&tsyms=USD')
       .reply(200, { USD: 1000.42 });
 
-    const { conversionRate, usdConversionRate } = await fetchExchangeRate('USD', 'ETH', false);
+    const { conversionRate, usdConversionRate } = await fetchExchangeRate(
+      'USD',
+      'ETH',
+      false,
+    );
 
-    expect(conversionRate).toEqual(1000.42);
-    expect(usdConversionRate).toEqual(1000.42);
+    expect(conversionRate).toStrictEqual(1000.42);
+    expect(usdConversionRate).toStrictEqual(1000.42);
   });
 
   it('should return USD conversion rate for USD when includeUSD is enabled', async () => {
@@ -86,10 +77,14 @@ describe('CryptoCompare', () => {
       .get('/data/price?fsym=ETH&tsyms=USD')
       .reply(200, { USD: 1000.42 });
 
-    const { conversionRate, usdConversionRate } = await fetchExchangeRate('USD', 'ETH', true);
+    const { conversionRate, usdConversionRate } = await fetchExchangeRate(
+      'USD',
+      'ETH',
+      true,
+    );
 
-    expect(conversionRate).toEqual(1000.42);
-    expect(usdConversionRate).toEqual(1000.42);
+    expect(conversionRate).toStrictEqual(1000.42);
+    expect(usdConversionRate).toStrictEqual(1000.42);
   });
 
   it('should return CAD and USD conversion rate', async () => {
@@ -97,10 +92,14 @@ describe('CryptoCompare', () => {
       .get('/data/price?fsym=ETH&tsyms=CAD,USD')
       .reply(200, { CAD: 2000.42, USD: 1000.42 });
 
-    const { conversionRate, usdConversionRate } = await fetchExchangeRate('CAD', 'ETH', true);
+    const { conversionRate, usdConversionRate } = await fetchExchangeRate(
+      'CAD',
+      'ETH',
+      true,
+    );
 
-    expect(conversionRate).toEqual(2000.42);
-    expect(usdConversionRate).toEqual(1000.42);
+    expect(conversionRate).toStrictEqual(2000.42);
+    expect(usdConversionRate).toStrictEqual(1000.42);
   });
 
   it('should throw if fetch throws', async () => {
@@ -108,15 +107,17 @@ describe('CryptoCompare', () => {
       .get('/data/price?fsym=ETH&tsyms=CAD')
       .replyWithError('Example network error');
 
-    await expect(fetchExchangeRate('CAD', 'ETH')).rejects.toThrow('Example network error');
+    await expect(fetchExchangeRate('CAD', 'ETH')).rejects.toThrow(
+      'Example network error',
+    );
   });
 
   it('should throw if fetch returns unsuccessful response', async () => {
-    nock(cryptoCompareHost)
-      .get('/data/price?fsym=ETH&tsyms=CAD')
-      .reply(500);
+    nock(cryptoCompareHost).get('/data/price?fsym=ETH&tsyms=CAD').reply(500);
 
-    await expect(fetchExchangeRate('CAD', 'ETH')).rejects.toThrow(`Fetch failed with status '500' for request '${cryptoCompareHost}/data/price?fsym=ETH&tsyms=CAD'`);
+    await expect(fetchExchangeRate('CAD', 'ETH')).rejects.toThrow(
+      `Fetch failed with status '500' for request '${cryptoCompareHost}/data/price?fsym=ETH&tsyms=CAD'`,
+    );
   });
 
   it('should throw if conversion rate is invalid', async () => {
@@ -124,7 +125,9 @@ describe('CryptoCompare', () => {
       .get('/data/price?fsym=ETH&tsyms=CAD')
       .reply(200, { CAD: 'invalid' });
 
-    await expect(fetchExchangeRate('CAD', 'ETH')).rejects.toThrow('Invalid response for CAD: invalid');
+    await expect(fetchExchangeRate('CAD', 'ETH')).rejects.toThrow(
+      'Invalid response for CAD: invalid',
+    );
   });
 
   it('should throw if USD conversion rate is invalid', async () => {
@@ -132,6 +135,21 @@ describe('CryptoCompare', () => {
       .get('/data/price?fsym=ETH&tsyms=CAD,USD')
       .reply(200, { CAD: 2000.47, USD: 'invalid' });
 
-    await expect(fetchExchangeRate('CAD', 'ETH', true)).rejects.toThrow('Invalid response for usdConversionRate: invalid');
+    await expect(fetchExchangeRate('CAD', 'ETH', true)).rejects.toThrow(
+      'Invalid response for usdConversionRate: invalid',
+    );
+  });
+
+  it('should throw an error if either currency is invalid', async () => {
+    nock(cryptoCompareHost)
+      .get('/data/price?fsym=ETH&tsyms=EUABRT')
+      .reply(200, {
+        Response: 'Error',
+        Message: 'Market does not exist for this coin pair',
+      });
+
+    await expect(fetchExchangeRate('EUABRT', 'ETH')).rejects.toThrow(
+      'Market does not exist for this coin pair',
+    );
   });
 });

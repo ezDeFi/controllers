@@ -1,9 +1,18 @@
 import { EventEmitter } from 'events';
-import { addHexPrefix, bufferToHex } from 'ethereumjs-util';
+import { addHexPrefix, bufferToHex, BN } from 'ethereumjs-util';
 import { ethErrors } from 'eth-rpc-errors';
+import MethodRegistry from 'eth-method-registry';
+import EthQuery from 'eth-query';
+import Common from '@ethereumjs/common';
+import { TransactionFactory, TypedTransaction } from '@ethereumjs/tx';
+import { v1 as random } from 'uuid';
+import { Mutex } from 'async-mutex';
+import { ethers } from 'ethers';
 import BaseController, { BaseConfig, BaseState } from '../BaseController';
-import NetworkController from '../network/NetworkController';
-
+import type {
+  NetworkState,
+  NetworkController,
+} from '../network/NetworkController';
 import {
   BNToHex,
   fractionBN,
@@ -15,13 +24,9 @@ import {
   handleTransactionFetch,
   query,
 } from '../util';
+import { MAINNET, RPC } from '../constants';
 
-const MethodRegistry = require('eth-method-registry');
-const EthQuery = require('eth-query');
-const Transaction = require('ethereumjs-tx');
-const random = require('uuid').v1;
-const { BN } = require('ethereumjs-util');
-const { Mutex } = require('async-mutex');
+const HARDFORK = 'berlin';
 
 /**
  * @type Result
@@ -71,27 +76,31 @@ export interface Transaction {
 }
 
 /**
- * @type TransactionMeta
- *
- * TransactionMeta representation
- *
- * @property error - Synthesized error information for failed transactions
- * @property id - Generated UUID associated with this transaction
- * @property networkID - Network code as per EIP-155 for this transaction
- * @property origin - Origin this transaction was sent from
- * @property rawTransaction - Hex representation of the underlying transaction
- * @property status - String status of this transaction
- * @property time - Timestamp associated with this transaction
- * @property toSmartContract - Whether transaction recipient is a smart contract
- * @property transaction - Underlying Transaction object
- * @property transactionHash - Hash of a successful transaction
- * @property blockNumber - Number of the block where the transaction has been included
+ * The status of the transaction. Each status represents the state of the transaction internally
+ * in the wallet. Some of these correspond with the state of the transaction on the network, but
+ * some are wallet-specific.
  */
-export interface TransactionMeta {
-  error?: {
-    message: string;
-    stack?: string;
-  };
+export enum TransactionStatus {
+  approved = 'approved',
+  cancelled = 'cancelled',
+  confirmed = 'confirmed',
+  failed = 'failed',
+  rejected = 'rejected',
+  signed = 'signed',
+  submitted = 'submitted',
+  unapproved = 'unapproved',
+}
+
+/**
+ * Options for wallet device.
+ */
+export enum WalletDevice {
+  MM_MOBILE = 'metamask_mobile',
+  MM_EXTENSION = 'metamask_extension',
+  OTHER = 'other_device',
+}
+
+type TransactionMetaBase = {
   isTransfer?: boolean;
   transferInformation?: {
     symbol: string;
@@ -103,13 +112,37 @@ export interface TransactionMeta {
   chainId?: string;
   origin?: string;
   rawTransaction?: string;
-  status: string;
   time: number;
   toSmartContract?: boolean;
   transaction: Transaction;
   transactionHash?: string;
   blockNumber?: string;
-}
+  deviceConfirmedOn?: WalletDevice;
+};
+
+/**
+ * @type TransactionMeta
+ *
+ * TransactionMeta representation
+ *
+ * @property error - Synthesized error information for failed transactions
+ * @property id - Generated UUID associated with this transaction
+ * @property networkID - Network code as per EIP-155 for this transaction
+ * @property origin - Origin this transaction was sent from
+ * @property deviceConfirmedOn - string to indicate what device the transaction was confirmed
+ * @property rawTransaction - Hex representation of the underlying transaction
+ * @property status - String status of this transaction
+ * @property time - Timestamp associated with this transaction
+ * @property toSmartContract - Whether transaction recipient is a smart contract
+ * @property transaction - Underlying Transaction object
+ * @property transactionHash - Hash of a successful transaction
+ * @property blockNumber - Number of the block where the transaction has been included
+ */
+export type TransactionMeta =
+  | ({
+      status: Exclude<TransactionStatus, TransactionStatus.failed>;
+    } & TransactionMetaBase)
+  | ({ status: TransactionStatus.failed; error: Error } & TransactionMetaBase);
 
 /**
  * @type EtherscanTransactionMeta
@@ -167,7 +200,6 @@ export interface EtherscanTransactionMeta {
  */
 export interface TransactionConfig extends BaseConfig {
   interval: number;
-  provider: any;
   sign?: (transaction: Transaction, from: string) => Promise<any>;
 }
 
@@ -210,7 +242,10 @@ export const SPEED_UP_RATE = 1.1;
 /**
  * Controller responsible for submitting and managing transactions
  */
-export class TransactionController extends BaseController<TransactionConfig, TransactionState> {
+export class TransactionController extends BaseController<
+  TransactionConfig,
+  TransactionState
+> {
   private ethQuery: any;
 
   private registry: any;
@@ -219,11 +254,16 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
 
   private mutex = new Mutex();
 
+  private getNetworkState: () => NetworkState;
+
   private failTransaction(transactionMeta: TransactionMeta, error: Error) {
-    transactionMeta.status = 'failed';
-    transactionMeta.error = error;
-    this.updateTransaction(transactionMeta);
-    this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
+    const newTransactionMeta = {
+      ...transactionMeta,
+      error,
+      status: TransactionStatus.failed,
+    };
+    this.updateTransaction(newTransactionMeta);
+    this.hub.emit(`${transactionMeta.id}:finished`, newTransactionMeta);
   }
 
   private async registryLookup(fourBytePrefix: string): Promise<MethodData> {
@@ -241,16 +281,17 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    * @param currentChainId - string representing the current chain id
    * @returns - TransactionMeta
    */
-  private normalizeTx(txMeta: EtherscanTransactionMeta, currentNetworkID: string, currentChainId: string): TransactionMeta {
+  private normalizeTx(
+    txMeta: EtherscanTransactionMeta,
+    currentNetworkID: string,
+    currentChainId: string,
+  ): TransactionMeta {
     const time = parseInt(txMeta.timeStamp, 10) * 1000;
-    /* istanbul ignore next */
-    const status = txMeta.isError === '0' ? 'confirmed' : 'failed';
-    return {
+    const normalizedTransactionBase = {
       blockNumber: txMeta.blockNumber,
       id: random({ msecs: time }),
       networkID: currentNetworkID,
       chainId: currentChainId,
-      status,
       time,
       transaction: {
         data: txMeta.input,
@@ -263,19 +304,46 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
       },
       transactionHash: txMeta.hash,
     };
+
+    /* istanbul ignore else */
+    if (txMeta.isError === '0') {
+      return {
+        ...normalizedTransactionBase,
+        status: TransactionStatus.confirmed,
+      };
+    }
+
+    /* istanbul ignore next */
+    return {
+      ...normalizedTransactionBase,
+      error: new Error('Transaction failed'),
+      status: TransactionStatus.failed,
+    };
   }
 
-  private normalizeTokenTx = (txMeta: EtherscanTransactionMeta, currentNetworkID: string, currentChainId: string): TransactionMeta => {
+  private normalizeTokenTx = (
+    txMeta: EtherscanTransactionMeta,
+    currentNetworkID: string,
+    currentChainId: string,
+  ): TransactionMeta => {
     const time = parseInt(txMeta.timeStamp, 10) * 1000;
     const {
-      to, from, gas, gasPrice, hash, contractAddress, tokenDecimal, tokenSymbol, value,
+      to,
+      from,
+      gas,
+      gasPrice,
+      hash,
+      contractAddress,
+      tokenDecimal,
+      tokenSymbol,
+      value,
     } = txMeta;
     return {
       id: random({ msecs: time }),
       isTransfer: true,
       networkID: currentNetworkID,
       chainId: currentChainId,
-      status: 'confirmed',
+      status: TransactionStatus.confirmed,
       time,
       transaction: {
         chainId: 1,
@@ -305,32 +373,54 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
   name = 'TransactionController';
 
   /**
-   * List of required sibling controllers this controller needs to function
-   */
-  requiredControllers = ['NetworkController'];
-
-  /**
    * Method used to sign transactions
    */
-  sign?: (transaction: Transaction, from: string) => Promise<void>;
+  sign?: (
+    transaction: TypedTransaction,
+    from: string,
+  ) => Promise<TypedTransaction>;
 
   /**
    * Creates a TransactionController instance
    *
+   * @param options
+   * @param options.getNetworkState - Gets the state of the network controller
+   * @param options.onNetworkStateChange - Allows subscribing to network controller state changes
+   * @param options.getProvider - Returns a provider for the current network
    * @param config - Initial options used to configure this controller
    * @param state - Initial state to set on this controller
    */
-  constructor(config?: Partial<TransactionConfig>, state?: Partial<TransactionState>) {
+  constructor(
+    {
+      getNetworkState,
+      onNetworkStateChange,
+      getProvider,
+    }: {
+      getNetworkState: () => NetworkState;
+      onNetworkStateChange: (listener: (state: NetworkState) => void) => void;
+      getProvider: () => NetworkController['provider'];
+    },
+    config?: Partial<TransactionConfig>,
+    state?: Partial<TransactionState>,
+  ) {
     super(config, state);
     this.defaultConfig = {
       interval: 5000,
-      provider: undefined,
     };
     this.defaultState = {
       methodData: {},
       transactions: [],
     };
     this.initialize();
+    const provider = getProvider();
+    this.getNetworkState = getNetworkState;
+    this.ethQuery = new EthQuery(provider);
+    this.registry = new MethodRegistry({ provider });
+    onNetworkStateChange(() => {
+      const newProvider = getProvider();
+      this.ethQuery = new EthQuery(newProvider);
+      this.registry = new MethodRegistry({ provider: newProvider });
+    });
     this.poll();
   }
 
@@ -358,16 +448,29 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     const releaseLock = await this.mutex.acquire();
     try {
       const { methodData } = this.state;
-      const knownMethod = Object.keys(methodData).find((knownFourBytePrefix) => fourBytePrefix === knownFourBytePrefix);
+      const knownMethod = Object.keys(methodData).find(
+        (knownFourBytePrefix) => fourBytePrefix === knownFourBytePrefix,
+      );
       if (knownMethod) {
         return methodData[fourBytePrefix];
       }
       const registry = await this.registryLookup(fourBytePrefix);
-      this.update({ methodData: { ...methodData, ...{ [fourBytePrefix]: registry } } });
+      this.update({
+        methodData: { ...methodData, ...{ [fourBytePrefix]: registry } },
+      });
       return registry;
     } finally {
       releaseLock();
     }
+  }
+
+  getNonce(address: string) {
+    const { provider } = this.getNetworkState();
+
+    const ethersProvider = new ethers.providers.JsonRpcProvider(
+      provider.rpcTarget,
+    );
+    return ethersProvider.getTransactionCount(address, 'pending');
   }
 
   /**
@@ -377,33 +480,36 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    *
    * @param transaction - Transaction object to add
    * @param origin - Domain origin to append to the generated TransactionMeta
+   * @param deviceConfirmedOn - enum to indicate what device the transaction was confirmed to append to the generated TransactionMeta
    * @returns - Object containing a promise resolving to the transaction hash if approved
    */
-  async addTransaction(transaction: Transaction, origin?: string): Promise<Result> {
-    const network = this.context.NetworkController as NetworkController;
+  async addTransaction(
+    transaction: Transaction,
+    origin?: string,
+    deviceConfirmedOn?: WalletDevice,
+  ): Promise<Result> {
+    this.hub.emit('addTransaction', { transaction, origin });
+    const { provider, network } = this.getNetworkState();
     const { transactions } = this.state;
     transaction = normalizeTransaction(transaction);
     validateTransaction(transaction);
 
-    const {
-        state: {
-          network: networkID,
-          provider: { chainId },
-        },
-      } = network;
-
     const transactionMeta = {
       id: random(),
-      networkID,
-      chainId,
+      networkID: network,
+      chainId: provider.chainId,
       origin,
-      status: 'unapproved',
+      status: TransactionStatus.unapproved as TransactionStatus.unapproved,
       time: Date.now(),
       transaction,
+      deviceConfirmedOn,
     };
 
     try {
       const { gas, gasPrice } = await this.estimateGas(transaction);
+      const nonce = await this.getNonce(transaction.from);
+      const nonceHex = `0x${nonce.toString(16)}`;
+      transaction.nonce = nonceHex;
       transaction.gas = gas;
       transaction.gasPrice = gasPrice;
     } catch (error) {
@@ -412,27 +518,77 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     }
 
     const result: Promise<string> = new Promise((resolve, reject) => {
-      this.hub.once(`${transactionMeta.id}:finished`, (meta: TransactionMeta) => {
-        switch (meta.status) {
-          case 'submitted':
-            return resolve(meta.transactionHash as string);
-          case 'rejected':
-            return reject(ethErrors.provider.userRejectedRequest('User rejected the transaction'));
-          case 'cancelled':
-            return reject(ethErrors.rpc.internal('User cancelled the transaction'));
-          case 'failed':
-            return reject(ethErrors.rpc.internal(meta.error!.message));
-          /* istanbul ignore next */
-          default:
-            return reject(ethErrors.rpc.internal(`MetaMask Tx Signature: Unknown problem: ${JSON.stringify(meta)}`));
-        }
-      });
+      this.hub.once(
+        `${transactionMeta.id}:finished`,
+        (meta: TransactionMeta) => {
+          switch (meta.status) {
+            case TransactionStatus.submitted:
+              return resolve(meta.transactionHash as string);
+            case TransactionStatus.rejected:
+              return reject(
+                ethErrors.provider.userRejectedRequest(
+                  'User rejected the transaction',
+                ),
+              );
+            case TransactionStatus.cancelled:
+              return reject(
+                ethErrors.rpc.internal('User cancelled the transaction'),
+              );
+            case TransactionStatus.failed:
+              return reject(ethErrors.rpc.internal(meta.error.message));
+            /* istanbul ignore next */
+            default:
+              return reject(
+                ethErrors.rpc.internal(
+                  `MetaMask Tx Signature: Unknown problem: ${JSON.stringify(
+                    meta,
+                  )}`,
+                ),
+              );
+          }
+        },
+      );
     });
 
     transactions.push(transactionMeta);
     this.update({ transactions: [...transactions] });
     this.hub.emit(`unapprovedTransaction`, transactionMeta);
     return { result, transactionMeta };
+  }
+
+  prepareUnsignedEthTx(txParams: Record<string, unknown>): TypedTransaction {
+    return TransactionFactory.fromTxData(txParams, {
+      common: this.getCommonConfiguration(),
+      freeze: false,
+    });
+  }
+
+  /**
+   * @ethereumjs/tx uses @ethereumjs/common as a configuration tool for
+   * specifying which chain, network, hardfork and EIPs to support for
+   * a transaction. By referencing this configuration, and analyzing the fields
+   * specified in txParams, @ethereumjs/tx is able to determine which EIP-2718
+   * transaction type to use.
+   * @returns {Common} common configuration object
+   */
+
+  getCommonConfiguration(): Common {
+    const {
+      network: networkId,
+      provider: { type: chain, chainId, nickname: name },
+    } = this.getNetworkState();
+
+    if (chain !== RPC) {
+      return new Common({ chain, hardfork: HARDFORK });
+    }
+
+    const customChainParams = {
+      name,
+      chainId: parseInt(chainId, undefined),
+      networkId: parseInt(networkId, undefined),
+    };
+
+    return Common.forCustomChain(MAINNET, customChainParams, HARDFORK);
   }
 
   /**
@@ -447,17 +603,20 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
   async approveTransaction(transactionID: string) {
     const { transactions } = this.state;
     const releaseLock = await this.mutex.acquire();
-    const network = this.context.NetworkController as NetworkController;
-    /* istanbul ignore next */
-    const currentChainId = network?.state?.provider?.chainId;
+    const { provider } = this.getNetworkState();
+    const { chainId: currentChainId } = provider;
     const index = transactions.findIndex(({ id }) => transactionID === id);
     const transactionMeta = transactions[index];
+    const { nonce } = transactionMeta.transaction;
 
     try {
       const { from } = transactionMeta.transaction;
       if (!this.sign) {
         releaseLock();
-        this.failTransaction(transactionMeta, new Error('No sign method defined.'));
+        this.failTransaction(
+          transactionMeta,
+          new Error('No sign method defined.'),
+        );
         return;
       } else if (!currentChainId) {
         releaseLock();
@@ -465,21 +624,39 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
         return;
       }
 
-      transactionMeta.status = 'approved';
-      transactionMeta.transaction.nonce = await query(this.ethQuery, 'getTransactionCount', [from, 'pending']);
-      transactionMeta.transaction.chainId = parseInt(currentChainId, undefined);
+      const chainId = parseInt(currentChainId, undefined);
+      const { approved: status } = TransactionStatus;
 
-      const ethTransaction = new Transaction({ ...transactionMeta.transaction });
-      await this.sign(ethTransaction, transactionMeta.transaction.from);
-      transactionMeta.status = 'signed';
+      const txNonce =
+        nonce ||
+        (await query(this.ethQuery, 'getTransactionCount', [from, 'pending']));
+
+      transactionMeta.status = status;
+      transactionMeta.transaction.nonce = txNonce;
+      transactionMeta.transaction.chainId = chainId;
+
+      const txParams = {
+        ...transactionMeta.transaction,
+        gasLimit: transactionMeta.transaction.gas,
+        chainId,
+        nonce: txNonce,
+        status,
+      };
+
+      const unsignedEthTx = this.prepareUnsignedEthTx(txParams);
+
+      const signedTx = await this.sign(unsignedEthTx, from);
+      transactionMeta.status = TransactionStatus.signed;
       this.updateTransaction(transactionMeta);
-      const rawTransaction = bufferToHex(ethTransaction.serialize());
+      const rawTransaction = bufferToHex(signedTx.serialize());
 
       transactionMeta.rawTransaction = rawTransaction;
       this.updateTransaction(transactionMeta);
-      const transactionHash = await query(this.ethQuery, 'sendRawTransaction', [rawTransaction]);
+      const transactionHash = await query(this.ethQuery, 'sendRawTransaction', [
+        rawTransaction,
+      ]);
       transactionMeta.transactionHash = transactionHash;
-      transactionMeta.status = 'submitted';
+      transactionMeta.status = TransactionStatus.submitted;
       this.updateTransaction(transactionMeta);
       this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
     } catch (error) {
@@ -496,13 +673,17 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    * @param transactionID - ID of the transaction to cancel
    */
   cancelTransaction(transactionID: string) {
-    const transactionMeta = this.state.transactions.find(({ id }) => id === transactionID);
+    const transactionMeta = this.state.transactions.find(
+      ({ id }) => id === transactionID,
+    );
     if (!transactionMeta) {
       return;
     }
-    transactionMeta.status = 'rejected';
+    transactionMeta.status = TransactionStatus.rejected;
     this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
-    const transactions = this.state.transactions.filter(({ id }) => id !== transactionID);
+    const transactions = this.state.transactions.filter(
+      ({ id }) => id !== transactionID,
+    );
     this.update({ transactions: [...transactions] });
   }
 
@@ -513,7 +694,9 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    * @param transactionID - ID of the transaction to cancel
    */
   async stopTransaction(transactionID: string) {
-    const transactionMeta = this.state.transactions.find(({ id }) => id === transactionID);
+    const transactionMeta = this.state.transactions.find(
+      ({ id }) => id === transactionID,
+    );
     if (!transactionMeta) {
       return;
     }
@@ -524,22 +707,34 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
 
     const existingGasPrice = transactionMeta.transaction.gasPrice;
     /* istanbul ignore next */
-    const existingGasPriceDecimal = parseInt(existingGasPrice === undefined ? '0x0' : existingGasPrice, 16);
-    const gasPrice = addHexPrefix(`${parseInt(`${existingGasPriceDecimal * CANCEL_RATE}`, 10).toString(16)}`);
+    const existingGasPriceDecimal = parseInt(
+      existingGasPrice === undefined ? '0x0' : existingGasPrice,
+      16,
+    );
+    const gasPrice = addHexPrefix(
+      `${parseInt(`${existingGasPriceDecimal * CANCEL_RATE}`, 10).toString(
+        16,
+      )}`,
+    );
 
-    const ethTransaction = new Transaction({
+    const txParams = {
       from: transactionMeta.transaction.from,
-      gas: transactionMeta.transaction.gas,
+      gasLimit: transactionMeta.transaction.gas,
       gasPrice,
       nonce: transactionMeta.transaction.nonce,
       to: transactionMeta.transaction.from,
       value: '0x0',
-    });
+    };
 
-    await this.sign(ethTransaction, transactionMeta.transaction.from);
-    const rawTransaction = bufferToHex(ethTransaction.serialize());
+    const unsignedEthTx = this.prepareUnsignedEthTx(txParams);
+
+    const signedTx = await this.sign(
+      unsignedEthTx,
+      transactionMeta.transaction.from,
+    );
+    const rawTransaction = bufferToHex(signedTx.serialize());
     await query(this.ethQuery, 'sendRawTransaction', [rawTransaction]);
-    transactionMeta.status = 'cancelled';
+    transactionMeta.status = TransactionStatus.cancelled;
     this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
   }
 
@@ -549,7 +744,9 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    * @param transactionID - ID of the transaction to speed up
    */
   async speedUpTransaction(transactionID: string) {
-    const transactionMeta = this.state.transactions.find(({ id }) => id === transactionID);
+    const transactionMeta = this.state.transactions.find(
+      ({ id }) => id === transactionID,
+    );
     /* istanbul ignore next */
     if (!transactionMeta) {
       return;
@@ -563,12 +760,32 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
     const { transactions } = this.state;
     const existingGasPrice = transactionMeta.transaction.gasPrice;
     /* istanbul ignore next */
-    const existingGasPriceDecimal = parseInt(existingGasPrice === undefined ? '0x0' : existingGasPrice, 16);
-    const gasPrice = addHexPrefix(`${parseInt(`${existingGasPriceDecimal * SPEED_UP_RATE}`, 10).toString(16)}`);
-    const ethTransaction = new Transaction({ ...transactionMeta.transaction, gasPrice });
-    await this.sign(ethTransaction, transactionMeta.transaction.from);
-    const rawTransaction = bufferToHex(ethTransaction.serialize());
-    const transactionHash = await query(this.ethQuery, 'sendRawTransaction', [rawTransaction]);
+    const existingGasPriceDecimal = parseInt(
+      existingGasPrice === undefined ? '0x0' : existingGasPrice,
+      16,
+    );
+    const gasPrice = addHexPrefix(
+      `${parseInt(`${existingGasPriceDecimal * SPEED_UP_RATE}`, 10).toString(
+        16,
+      )}`,
+    );
+
+    const txParams = {
+      ...transactionMeta.transaction,
+      gasLimit: transactionMeta.transaction.gas,
+      gasPrice,
+    };
+
+    const unsignedEthTx = this.prepareUnsignedEthTx(txParams);
+
+    const signedTx = await this.sign(
+      unsignedEthTx,
+      transactionMeta.transaction.from,
+    );
+    const rawTransaction = bufferToHex(signedTx.serialize());
+    const transactionHash = await query(this.ethQuery, 'sendRawTransaction', [
+      rawTransaction,
+    ]);
     const newTransactionMeta = {
       ...transactionMeta,
       id: random(),
@@ -592,14 +809,26 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    */
   async estimateGas(transaction: Transaction) {
     const estimatedTransaction = { ...transaction };
-    const { gas, gasPrice: providedGasPrice, to, value, data } = estimatedTransaction;
-    const gasPrice = typeof providedGasPrice === 'undefined' ? await query(this.ethQuery, 'gasPrice') : providedGasPrice;
+    const {
+      gas,
+      gasPrice: providedGasPrice,
+      to,
+      value,
+      data,
+    } = estimatedTransaction;
+    const gasPrice =
+      typeof providedGasPrice === 'undefined'
+        ? await query(this.ethQuery, 'gasPrice')
+        : providedGasPrice;
 
     // 1. If gas is already defined on the transaction, use it
     if (typeof gas !== 'undefined') {
       return { gas, gasPrice };
     }
-    const { gasLimit } = await query(this.ethQuery, 'getBlockByNumber', ['latest', false]);
+    const { gasLimit } = await query(this.ethQuery, 'getBlockByNumber', [
+      'latest',
+      false,
+    ]);
 
     // 2. If to is not defined or this is not a contract address, and there is no data use 0x5208 / 21000
     /* istanbul ignore next */
@@ -609,12 +838,23 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
       return { gas: '0x5208', gasPrice };
     }
     // if data, should be hex string format
-    estimatedTransaction.data = !data ? data : /* istanbul ignore next */ addHexPrefix(data);
+    estimatedTransaction.data = !data
+      ? data
+      : /* istanbul ignore next */ addHexPrefix(data);
     // 3. If this is a contract address, safely estimate gas using RPC
-    estimatedTransaction.value = typeof value === 'undefined' ? '0x0' : /* istanbul ignore next */ value;
+    estimatedTransaction.value =
+      typeof value === 'undefined' ? '0x0' : /* istanbul ignore next */ value;
     const gasLimitBN = hexToBN(gasLimit);
     estimatedTransaction.gas = BNToHex(fractionBN(gasLimitBN, 19, 20));
-    const gasHex = await query(this.ethQuery, 'estimateGas', [estimatedTransaction]);
+    let gasHex;
+    try {
+      gasHex = await query(this.ethQuery, 'estimateGas', [
+        estimatedTransaction,
+      ]);
+    } catch (error) {
+      console.log('error estimate gas');
+      gasHex = '28aae';
+    }
 
     // 4. Pad estimated gas without exceeding the most recent block gasLimit
     const gasBN = hexToBN(gasHex);
@@ -632,23 +872,6 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
   }
 
   /**
-   * Extension point called if and when this controller is composed
-   * with other controllers using a ComposableController
-   */
-  onComposed() {
-    super.onComposed();
-    const network = this.context.NetworkController as NetworkController;
-    const onProviderUpdate = () => {
-      this.ethQuery = network.provider ? new EthQuery(network.provider) : /* istanbul ignore next */ null;
-      this.registry = network.provider
-        ? new MethodRegistry({ provider: network.provider }) /* istanbul ignore next */
-        : null;
-    };
-    onProviderUpdate();
-    network.subscribe(onProviderUpdate);
-  }
-
-  /**
    * Resiliently checks all submitted transactions on the blockchain
    * and verifies that it has been included in a block
    * when that happens, the tx status is updated to confirmed
@@ -657,19 +880,24 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    */
   async queryTransactionStatuses() {
     const { transactions } = this.state;
-    const network = this.context.NetworkController;
-    const currentChainId = network.state.provider.chainId;
-    const currentNetworkID = network.state.network;
+    const { provider, network: currentNetworkID } = this.getNetworkState();
+    const { chainId: currentChainId } = provider;
     let gotUpdates = false;
     await safelyExecute(() =>
       Promise.all(
         transactions.map(async (meta, index) => {
           // Using fallback to networkID only when there is no chainId present. Should be removed when networkID is completely removed.
-          if (meta.status === 'submitted' && (meta.chainId === currentChainId || (!meta.chainId && meta.networkID === currentNetworkID))) {
-            const txObj = await query(this.ethQuery, 'getTransactionByHash', [meta.transactionHash]);
-            /* istanbul ignore else */
-            if (txObj && txObj.blockNumber) {
-              transactions[index].status = 'confirmed';
+          if (
+            meta.status === TransactionStatus.submitted &&
+            (meta.chainId === currentChainId ||
+              (!meta.chainId && meta.networkID === currentNetworkID))
+          ) {
+            const txObj = await query(this.ethQuery, 'getTransactionByHash', [
+              meta.transactionHash,
+            ]);
+            /* istanbul ignore next */
+            if (txObj?.blockNumber) {
+              transactions[index].status = TransactionStatus.confirmed;
               this.hub.emit(`${meta.id}:confirmed`, meta);
               gotUpdates = true;
             }
@@ -690,7 +918,9 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    */
   updateTransaction(transactionMeta: TransactionMeta) {
     const { transactions } = this.state;
-    transactionMeta.transaction = normalizeTransaction(transactionMeta.transaction);
+    transactionMeta.transaction = normalizeTransaction(
+      transactionMeta.transaction,
+    );
     validateTransaction(transactionMeta.transaction);
     const index = transactions.findIndex(({ id }) => transactionMeta.id === id);
     transactions[index] = transactionMeta;
@@ -708,17 +938,17 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
       this.update({ transactions: [] });
       return;
     }
-    const network = this.context.NetworkController as NetworkController;
-    if (!network) {
-      return;
-    }
-    const currentChainId = network.state.provider.chainId;
-    const currentNetworkID = network.state.network;
-    const newTransactions = this.state.transactions.filter(({ networkID, chainId }) => {
+    const { provider, network: currentNetworkID } = this.getNetworkState();
+    const { chainId: currentChainId } = provider;
+    const newTransactions = this.state.transactions.filter(
+      ({ networkID, chainId }) => {
         // Using fallback to networkID only when there is no chainId present. Should be removed when networkID is completely removed.
-        const isCurrentNetwork = (chainId === currentChainId || (!chainId && networkID === currentNetworkID));
+        const isCurrentNetwork =
+          chainId === currentChainId ||
+          (!chainId && networkID === currentNetworkID);
         return !isCurrentNetwork;
-    });
+      },
+    );
 
     this.update({ transactions: newTransactions });
   }
@@ -731,47 +961,41 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
    * @param opt - Object containing optional data, fromBlock and Alethio API key
    * @returns - Promise resolving to an string containing the block number of the latest incoming transaction.
    */
-  async fetchAll(address: string, opt?: FetchAllOptions): Promise<string | void> {
-    const network = this.context.NetworkController;
-    const {
-      state: {
-        network: currentNetworkID,
-        provider: { type: networkType, chainId: currentChainId },
-      },
-    } = network;
+  async fetchAll(
+    address: string,
+    opt?: FetchAllOptions,
+  ): Promise<string | void> {
+    const { provider, network: currentNetworkID } = this.getNetworkState();
+    const { chainId: currentChainId, type: networkType } = provider;
 
     const supportedNetworkIds = ['1', '3', '4', '42'];
     /* istanbul ignore next */
     if (supportedNetworkIds.indexOf(currentNetworkID) === -1) {
-      return;
+      return undefined;
     }
 
-    const [etherscanTxResponse, etherscanTokenResponse] = await handleTransactionFetch(networkType, address, opt);
-    const remoteTxList: { [key: string]: number } = {};
-    const remoteTxs: TransactionMeta[] = [];
+    const [
+      etherscanTxResponse,
+      etherscanTokenResponse,
+    ] = await handleTransactionFetch(networkType, address, opt);
 
-    etherscanTxResponse.result.forEach((tx: EtherscanTransactionMeta) => {
-      /* istanbul ignore next */
-      if (!remoteTxList[tx.hash]) {
-        const cleanTx = this.normalizeTx(tx, currentNetworkID, currentChainId);
-        remoteTxs.push(cleanTx);
-        remoteTxList[tx.hash] = 1;
-      }
-    });
-
-    etherscanTokenResponse.result.forEach((tx: EtherscanTransactionMeta) => {
-      const cleanTx = this.normalizeTokenTx(tx, currentNetworkID, currentChainId);
-      remoteTxs.push(cleanTx);
-      /* istanbul ignore next */
-      remoteTxList[cleanTx.transactionHash || ''] = 1;
-    });
-
-    const localTxs = this.state.transactions.filter(
-      /* istanbul ignore next */
-      (tx: TransactionMeta) => !remoteTxList[`${tx.transactionHash}`],
+    const normalizedTxs = etherscanTxResponse.result.map(
+      (tx: EtherscanTransactionMeta) =>
+        this.normalizeTx(tx, currentNetworkID, currentChainId),
+    );
+    const normalizedTokenTxs = etherscanTokenResponse.result.map(
+      (tx: EtherscanTransactionMeta) =>
+        this.normalizeTokenTx(tx, currentNetworkID, currentChainId),
     );
 
-    const allTxs = [...remoteTxs, ...localTxs];
+    const remoteTxs = [...normalizedTxs, ...normalizedTokenTxs].filter((tx) => {
+      const alreadyInTransactions = this.state.transactions.find(
+        ({ transactionHash }) => transactionHash === tx.transactionHash,
+      );
+      return !alreadyInTransactions;
+    });
+
+    const allTxs = [...remoteTxs, ...this.state.transactions];
     allTxs.sort((a, b) => (a.time < b.time ? -1 : 1));
 
     let latestIncomingTxBlockNumber: string | undefined;
@@ -779,13 +1003,16 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
       /* istanbul ignore next */
       if (
         // Using fallback to networkID only when there is no chainId present. Should be removed when networkID is completely removed.
-        (tx.chainId === currentChainId || (!tx.chainId && tx.networkID === currentNetworkID)) &&
+        (tx.chainId === currentChainId ||
+          (!tx.chainId && tx.networkID === currentNetworkID)) &&
         tx.transaction.to &&
         tx.transaction.to.toLowerCase() === address.toLowerCase()
       ) {
         if (
           tx.blockNumber &&
-          (!latestIncomingTxBlockNumber || parseInt(latestIncomingTxBlockNumber, 10) < parseInt(tx.blockNumber, 10))
+          (!latestIncomingTxBlockNumber ||
+            parseInt(latestIncomingTxBlockNumber, 10) <
+              parseInt(tx.blockNumber, 10))
         ) {
           latestIncomingTxBlockNumber = tx.blockNumber;
         }
@@ -793,8 +1020,13 @@ export class TransactionController extends BaseController<TransactionConfig, Tra
       /* istanbul ignore else */
       if (tx.toSmartContract === undefined) {
         // If not `to` is a contract deploy, if not `data` is send eth
-        if (tx.transaction.to && (!tx.transaction.data || tx.transaction.data !== '0x')) {
-          const code = await query(this.ethQuery, 'getCode', [tx.transaction.to]);
+        if (
+          tx.transaction.to &&
+          (!tx.transaction.data || tx.transaction.data !== '0x')
+        ) {
+          const code = await query(this.ethQuery, 'getCode', [
+            tx.transaction.to,
+          ]);
           tx.toSmartContract = isSmartContractCode(code);
         } else {
           tx.toSmartContract = false;

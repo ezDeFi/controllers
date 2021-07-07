@@ -16,7 +16,6 @@ interface ApprovalCallbacks {
 }
 
 export interface Approval {
-
   /**
    * The ID of the approval request.
    */
@@ -52,11 +51,13 @@ export interface ApprovalState extends BaseState {
   [APPROVAL_COUNT_STORE_KEY]: number;
 }
 
-const getAlreadyPendingMessage = (origin: string, type: string) => (
-  `Request of type '${type}' already pending for origin ${origin}. Please wait.`
-);
+const getAlreadyPendingMessage = (origin: string, type: string) =>
+  `Request of type '${type}' already pending for origin ${origin}. Please wait.`;
 
-const defaultState: ApprovalState = { [APPROVALS_STORE_KEY]: {}, [APPROVAL_COUNT_STORE_KEY]: 0 };
+const defaultState: ApprovalState = {
+  [APPROVALS_STORE_KEY]: {},
+  [APPROVAL_COUNT_STORE_KEY]: 0,
+};
 
 /**
  * Controller for managing requests that require user approval.
@@ -67,8 +68,10 @@ const defaultState: ApprovalState = { [APPROVALS_STORE_KEY]: {}, [APPROVAL_COUNT
  * Adding a request returns a promise that resolves or rejects when the request
  * is approved or denied, respectively.
  */
-export class ApprovalController extends BaseController<ApprovalConfig, ApprovalState> {
-
+export class ApprovalController extends BaseController<
+  ApprovalConfig,
+  ApprovalState
+> {
   private _approvals: Map<string, ApprovalCallbacks>;
 
   private _origins: Map<string, Set<string>>;
@@ -116,7 +119,12 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
     type: string;
     requestData?: RequestData;
   }): Promise<unknown> {
-    const promise = this._add(opts.origin, opts.type, opts.id, opts.requestData);
+    const promise = this._add(
+      opts.origin,
+      opts.type,
+      opts.id,
+      opts.requestData,
+    );
     this._showApprovalRequest();
     return promise;
   }
@@ -154,9 +162,7 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
    */
   get(id: string): Approval | undefined {
     const info = this.state[APPROVALS_STORE_KEY][id];
-    return info
-      ? { ...info }
-      : undefined;
+    return info ? { ...info } : undefined;
   }
 
   /**
@@ -173,7 +179,7 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
    * @returns The current approval request count for the given origin and/or
    * type.
    */
-  getApprovalCount(opts: { origin?: string; type?: string} = {}): number {
+  getApprovalCount(opts: { origin?: string; type?: string } = {}): number {
     if (!opts.origin && !opts.type) {
       throw new Error('Must specify origin, type, or both.');
     }
@@ -284,7 +290,7 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
    */
   clear(): void {
     const rejectionError = ethErrors.rpc.resourceUnavailable(
-      'The request was rejected; please try again.'
+      'The request was rejected; please try again.',
     );
 
     for (const id of this._approvals.keys()) {
@@ -337,7 +343,7 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
     id: string,
     origin: string,
     type: string,
-    requestData?: RequestData
+    requestData?: RequestData,
   ): void {
     let errorMessage = null;
     if (!id || typeof id !== 'string') {
@@ -348,9 +354,10 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
       errorMessage = 'Must specify non-empty string origin.';
     } else if (!type || typeof type !== 'string') {
       errorMessage = 'Must specify non-empty string type.';
-    } else if (requestData && (
-      typeof requestData !== 'object' || Array.isArray(requestData)
-    )) {
+    } else if (
+      requestData &&
+      (typeof requestData !== 'object' || Array.isArray(requestData))
+    ) {
       errorMessage = 'Request data must be a plain object if specified.';
     }
 
@@ -388,7 +395,7 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
     id: string,
     origin: string,
     type: string,
-    requestData?: RequestData
+    requestData?: RequestData,
   ): void {
     const approval: Approval = { id, origin, type, time: Date.now() };
     if (requestData) {
@@ -400,10 +407,13 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
       [id]: approval,
     };
 
-    this.update({
-      [APPROVALS_STORE_KEY]: approvals,
-      [APPROVAL_COUNT_STORE_KEY]: Object.keys(approvals).length,
-    }, true);
+    this.update(
+      {
+        [APPROVALS_STORE_KEY]: approvals,
+        [APPROVAL_COUNT_STORE_KEY]: Object.keys(approvals).length,
+      },
+      true,
+    );
   }
 
   /**
@@ -427,10 +437,13 @@ export class ApprovalController extends BaseController<ApprovalConfig, ApprovalS
 
     const newApprovals = { ...approvals };
     delete newApprovals[id];
-    this.update({
-      [APPROVALS_STORE_KEY]: newApprovals,
-      [APPROVAL_COUNT_STORE_KEY]: Object.keys(newApprovals).length,
-    }, true);
+    this.update(
+      {
+        [APPROVALS_STORE_KEY]: newApprovals,
+        [APPROVAL_COUNT_STORE_KEY]: Object.keys(newApprovals).length,
+      },
+      true,
+    );
   }
 
   /**

@@ -1,29 +1,33 @@
 import BaseController from './BaseController';
-
-/**
- * Child controller instances keyed by controller name
- */
-export interface ChildControllerContext {
-  [key: string]: BaseController<any, any>;
-}
+import { RestrictedControllerMessenger } from './ControllerMessenger';
 
 /**
  * List of child controller instances
+ *
+ * This type encompasses controllers based up either BaseController or
+ * BaseControllerV2. The BaseControllerV2 type can't be included directly
+ * because the generic parameters it expects require knowing the exact state
+ * shape, so instead we look for an object with the BaseControllerV2 properties
+ * that we use in the ComposableController (name and state).
  */
-export type ControllerList = BaseController<any, any>[];
+export type ControllerList = (
+  | BaseController<any, any>
+  | { name: string; state: Record<string, unknown> }
+)[];
 
 /**
  * Controller that can be used to compose multiple controllers together
  */
-export class ComposableController extends BaseController<any, any> {
-  private cachedState: any;
+export class ComposableController extends BaseController<never, any> {
+  private controllers: ControllerList = [];
 
-  private internalControllers: ControllerList = [];
-
-  /**
-   * Map of stores to compose together
-   */
-  context: ChildControllerContext = {};
+  private messagingSystem?: RestrictedControllerMessenger<
+    'ComposableController',
+    never,
+    any,
+    never,
+    any
+  >;
 
   /**
    * Name of this controller used during composition
@@ -34,47 +38,47 @@ export class ComposableController extends BaseController<any, any> {
    * Creates a ComposableController instance
    *
    * @param controllers - Map of names to controller instances
-   * @param initialState - Initial state keyed by child controller name
+   * @param messenger - The controller messaging system, used for communicating with BaseControllerV2 controllers
    */
-  constructor(controllers: ControllerList = [], initialState?: any) {
-    super();
+  constructor(
+    controllers: ControllerList,
+    messenger?: RestrictedControllerMessenger<
+      'ComposableController',
+      never,
+      any,
+      never,
+      any
+    >,
+  ) {
+    super(
+      undefined,
+      controllers.reduce((state, controller) => {
+        state[controller.name] = controller.state;
+        return state;
+      }, {} as any),
+    );
     this.initialize();
-    this.cachedState = initialState;
     this.controllers = controllers;
-    this.cachedState = undefined;
-  }
-
-  /**
-   * Get current list of child composed store instances
-   *
-   * @returns - List of names to controller instances
-   */
-  get controllers() {
-    return this.internalControllers;
-  }
-
-  /**
-   * Set new list of controller instances
-   *
-   * @param controllers - List of names to controller instsances
-   */
-  set controllers(controllers: ControllerList) {
-    this.internalControllers = controllers;
-    const initialState: any = {};
-    controllers.forEach((controller) => {
+    this.messagingSystem = messenger;
+    this.controllers.forEach((controller) => {
       const { name } = controller;
-      this.context[name] = controller;
-      controller.context = this.context;
-      this.cachedState && this.cachedState[name] && controller.update(this.cachedState[name]);
-      initialState[name] = controller.state;
-      controller.subscribe((state) => {
-        this.update({ [name]: state });
-      });
+      if ((controller as BaseController<any, any>).subscribe !== undefined) {
+        (controller as BaseController<any, any>).subscribe((state) => {
+          this.update({ [name]: state });
+        });
+      } else if (this.messagingSystem) {
+        (this.messagingSystem.subscribe as any)(
+          `${name}:stateChange`,
+          (state: any) => {
+            this.update({ [name]: state });
+          },
+        );
+      } else {
+        throw new Error(
+          `Messaging system required if any BaseControllerV2 controllers are used`,
+        );
+      }
     });
-    controllers.forEach((controller) => {
-      controller.onComposed();
-    });
-    this.update(initialState, true);
   }
 
   /**
@@ -86,8 +90,8 @@ export class ComposableController extends BaseController<any, any> {
    */
   get flatState() {
     let flatState = {};
-    for (const name in this.context) {
-      flatState = { ...flatState, ...this.context[name].state };
+    for (const controller of this.controllers) {
+      flatState = { ...flatState, ...controller.state };
     }
     return flatState;
   }

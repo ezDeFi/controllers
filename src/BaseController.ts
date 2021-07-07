@@ -1,5 +1,3 @@
-import { ChildControllerContext } from './ComposableController';
-
 /**
  * State change callbacks
  */
@@ -32,13 +30,6 @@ export interface BaseState {
  */
 export class BaseController<C extends BaseConfig, S extends BaseState> {
   /**
-   * Map of all sibling child controllers keyed by name if this
-   * controller is composed using a ComposableController, allowing
-   * any API on any sibling controller to be accessed
-   */
-  context: ChildControllerContext = {};
-
-  /**
    * Default options used to configure this controller
    */
   defaultConfig: C = {} as C;
@@ -57,11 +48,6 @@ export class BaseController<C extends BaseConfig, S extends BaseState> {
    * Name of this controller used during composition
    */
   name = 'BaseController';
-
-  /**
-   * List of required sibling controllers this controller needs to function
-   */
-  requiredControllers: string[] = [];
 
   private readonly initialConfig: C;
 
@@ -128,7 +114,9 @@ export class BaseController<C extends BaseConfig, S extends BaseState> {
    */
   configure(config: Partial<C>, overwrite = false, fullUpdate = true) {
     if (fullUpdate) {
-      this.internalConfig = overwrite ? (config as C) : Object.assign(this.internalConfig, config);
+      this.internalConfig = overwrite
+        ? (config as C)
+        : Object.assign(this.internalConfig, config);
 
       for (const key in this.internalConfig) {
         if (typeof this.internalConfig[key] !== 'undefined') {
@@ -155,18 +143,6 @@ export class BaseController<C extends BaseConfig, S extends BaseState> {
     }
     this.internalListeners.forEach((listener) => {
       listener(this.internalState);
-    });
-  }
-
-  /**
-   * Extension point called if and when this controller is composed
-   * with other controllers using a ComposableController
-   */
-  onComposed() {
-    this.requiredControllers.forEach((name) => {
-      if (!this.context[name]) {
-        throw new Error(`${this.name} must be composed with ${name}.`);
-      }
     });
   }
 
@@ -198,7 +174,9 @@ export class BaseController<C extends BaseConfig, S extends BaseState> {
    * @param overwrite - Overwrite state instead of merging
    */
   update(state: Partial<S>, overwrite = false) {
-    this.internalState = overwrite ? Object.assign({}, state as S) : Object.assign({}, this.internalState, state);
+    this.internalState = overwrite
+      ? Object.assign({}, state as S)
+      : Object.assign({}, this.internalState, state);
     this.notify();
   }
 }
