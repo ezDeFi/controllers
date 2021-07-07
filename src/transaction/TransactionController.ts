@@ -3,8 +3,7 @@ import { addHexPrefix, bufferToHex, BN } from 'ethereumjs-util';
 import { ethErrors } from 'eth-rpc-errors';
 import MethodRegistry from 'eth-method-registry';
 import EthQuery from 'eth-query';
-import Common from '@ethereumjs/common';
-import { TransactionFactory, TypedTransaction } from '@ethereumjs/tx';
+import Transaction from 'ethereumjs-tx';
 import { v1 as random } from 'uuid';
 import { Mutex } from 'async-mutex';
 import { ethers } from 'ethers';
@@ -24,10 +23,6 @@ import {
   handleTransactionFetch,
   query,
 } from '../util';
-import { MAINNET, RPC } from '../constants';
-
-const HARDFORK = 'berlin';
-
 /**
  * @type Result
  *
@@ -304,7 +299,6 @@ export class TransactionController extends BaseController<
       },
       transactionHash: txMeta.hash,
     };
-
     /* istanbul ignore else */
     if (txMeta.isError === '0') {
       return {
@@ -312,7 +306,6 @@ export class TransactionController extends BaseController<
         status: TransactionStatus.confirmed,
       };
     }
-
     /* istanbul ignore next */
     return {
       ...normalizedTransactionBase,
@@ -375,10 +368,7 @@ export class TransactionController extends BaseController<
   /**
    * Method used to sign transactions
    */
-  sign?: (
-    transaction: TypedTransaction,
-    from: string,
-  ) => Promise<TypedTransaction>;
+  sign?: (transaction: Transaction, from: string) => Promise<void>;
 
   /**
    * Creates a TransactionController instance
@@ -466,7 +456,6 @@ export class TransactionController extends BaseController<
 
   getNonce(address: string) {
     const { provider } = this.getNetworkState();
-
     const ethersProvider = new ethers.providers.JsonRpcProvider(
       provider.rpcTarget,
     );
@@ -504,7 +493,6 @@ export class TransactionController extends BaseController<
       transaction,
       deviceConfirmedOn,
     };
-
     try {
       const { gas, gasPrice } = await this.estimateGas(transaction);
       const nonce = await this.getNonce(transaction.from);
@@ -549,46 +537,10 @@ export class TransactionController extends BaseController<
         },
       );
     });
-
     transactions.push(transactionMeta);
     this.update({ transactions: [...transactions] });
     this.hub.emit(`unapprovedTransaction`, transactionMeta);
     return { result, transactionMeta };
-  }
-
-  prepareUnsignedEthTx(txParams: Record<string, unknown>): TypedTransaction {
-    return TransactionFactory.fromTxData(txParams, {
-      common: this.getCommonConfiguration(),
-      freeze: false,
-    });
-  }
-
-  /**
-   * @ethereumjs/tx uses @ethereumjs/common as a configuration tool for
-   * specifying which chain, network, hardfork and EIPs to support for
-   * a transaction. By referencing this configuration, and analyzing the fields
-   * specified in txParams, @ethereumjs/tx is able to determine which EIP-2718
-   * transaction type to use.
-   * @returns {Common} common configuration object
-   */
-
-  getCommonConfiguration(): Common {
-    const {
-      network: networkId,
-      provider: { type: chain, chainId, nickname: name },
-    } = this.getNetworkState();
-
-    if (chain !== RPC) {
-      return new Common({ chain, hardfork: HARDFORK });
-    }
-
-    const customChainParams = {
-      name,
-      chainId: parseInt(chainId, undefined),
-      networkId: parseInt(networkId, undefined),
-    };
-
-    return Common.forCustomChain(MAINNET, customChainParams, HARDFORK);
   }
 
   /**
@@ -600,6 +552,7 @@ export class TransactionController extends BaseController<
    * @param transactionID - ID of the transaction to approve
    * @returns - Promise resolving when this operation completes
    */
+
   async approveTransaction(transactionID: string) {
     const { transactions } = this.state;
     const releaseLock = await this.mutex.acquire();
@@ -608,7 +561,6 @@ export class TransactionController extends BaseController<
     const index = transactions.findIndex(({ id }) => transactionID === id);
     const transactionMeta = transactions[index];
     const { nonce } = transactionMeta.transaction;
-
     try {
       const { from } = transactionMeta.transaction;
       if (!this.sign) {
@@ -624,32 +576,18 @@ export class TransactionController extends BaseController<
         return;
       }
 
-      const chainId = parseInt(currentChainId, undefined);
-      const { approved: status } = TransactionStatus;
-
-      const txNonce =
+      transactionMeta.status = TransactionStatus.approved;
+      transactionMeta.transaction.nonce =
         nonce ||
         (await query(this.ethQuery, 'getTransactionCount', [from, 'pending']));
-
-      transactionMeta.status = status;
-      transactionMeta.transaction.nonce = txNonce;
-      transactionMeta.transaction.chainId = chainId;
-
-      const txParams = {
+      transactionMeta.transaction.chainId = parseInt(currentChainId, undefined);
+      const ethTransaction = new Transaction({
         ...transactionMeta.transaction,
-        gasLimit: transactionMeta.transaction.gas,
-        chainId,
-        nonce: txNonce,
-        status,
-      };
-
-      const unsignedEthTx = this.prepareUnsignedEthTx(txParams);
-
-      const signedTx = await this.sign(unsignedEthTx, from);
+      });
+      await this.sign(ethTransaction, transactionMeta.transaction.from);
       transactionMeta.status = TransactionStatus.signed;
       this.updateTransaction(transactionMeta);
-      const rawTransaction = bufferToHex(signedTx.serialize());
-
+      const rawTransaction = bufferToHex(ethTransaction.serialize());
       transactionMeta.rawTransaction = rawTransaction;
       this.updateTransaction(transactionMeta);
       const transactionHash = await query(this.ethQuery, 'sendRawTransaction', [
@@ -700,11 +638,9 @@ export class TransactionController extends BaseController<
     if (!transactionMeta) {
       return;
     }
-
     if (!this.sign) {
       throw new Error('No sign method defined.');
     }
-
     const existingGasPrice = transactionMeta.transaction.gasPrice;
     /* istanbul ignore next */
     const existingGasPriceDecimal = parseInt(
@@ -717,22 +653,16 @@ export class TransactionController extends BaseController<
       )}`,
     );
 
-    const txParams = {
+    const ethTransaction = new Transaction({
       from: transactionMeta.transaction.from,
-      gasLimit: transactionMeta.transaction.gas,
+      gas: transactionMeta.transaction.gas,
       gasPrice,
       nonce: transactionMeta.transaction.nonce,
       to: transactionMeta.transaction.from,
       value: '0x0',
-    };
-
-    const unsignedEthTx = this.prepareUnsignedEthTx(txParams);
-
-    const signedTx = await this.sign(
-      unsignedEthTx,
-      transactionMeta.transaction.from,
-    );
-    const rawTransaction = bufferToHex(signedTx.serialize());
+    });
+    await this.sign(ethTransaction, transactionMeta.transaction.from);
+    const rawTransaction = bufferToHex(ethTransaction.serialize());
     await query(this.ethQuery, 'sendRawTransaction', [rawTransaction]);
     transactionMeta.status = TransactionStatus.cancelled;
     this.hub.emit(`${transactionMeta.id}:finished`, transactionMeta);
@@ -751,12 +681,10 @@ export class TransactionController extends BaseController<
     if (!transactionMeta) {
       return;
     }
-
     /* istanbul ignore next */
     if (!this.sign) {
       throw new Error('No sign method defined.');
     }
-
     const { transactions } = this.state;
     const existingGasPrice = transactionMeta.transaction.gasPrice;
     /* istanbul ignore next */
@@ -769,20 +697,12 @@ export class TransactionController extends BaseController<
         16,
       )}`,
     );
-
-    const txParams = {
+    const ethTransaction = new Transaction({
       ...transactionMeta.transaction,
-      gasLimit: transactionMeta.transaction.gas,
       gasPrice,
-    };
-
-    const unsignedEthTx = this.prepareUnsignedEthTx(txParams);
-
-    const signedTx = await this.sign(
-      unsignedEthTx,
-      transactionMeta.transaction.from,
-    );
-    const rawTransaction = bufferToHex(signedTx.serialize());
+    });
+    await this.sign(ethTransaction, transactionMeta.transaction.from);
+    const rawTransaction = bufferToHex(ethTransaction.serialize());
     const transactionHash = await query(this.ethQuery, 'sendRawTransaction', [
       rawTransaction,
     ]);
@@ -820,7 +740,6 @@ export class TransactionController extends BaseController<
       typeof providedGasPrice === 'undefined'
         ? await query(this.ethQuery, 'gasPrice')
         : providedGasPrice;
-
     // 1. If gas is already defined on the transaction, use it
     if (typeof gas !== 'undefined') {
       return { gas, gasPrice };
@@ -829,7 +748,6 @@ export class TransactionController extends BaseController<
       'latest',
       false,
     ]);
-
     // 2. If to is not defined or this is not a contract address, and there is no data use 0x5208 / 21000
     /* istanbul ignore next */
     const code = to ? await query(this.ethQuery, 'getCode', [to]) : undefined;
@@ -855,7 +773,6 @@ export class TransactionController extends BaseController<
       console.log('error estimate gas');
       gasHex = '28aae';
     }
-
     // 4. Pad estimated gas without exceeding the most recent block gasLimit
     const gasBN = hexToBN(gasHex);
     const maxGasBN = gasLimitBN.muln(0.9);
@@ -949,7 +866,6 @@ export class TransactionController extends BaseController<
         return !isCurrentNetwork;
       },
     );
-
     this.update({ transactions: newTransactions });
   }
 
@@ -967,18 +883,15 @@ export class TransactionController extends BaseController<
   ): Promise<string | void> {
     const { provider, network: currentNetworkID } = this.getNetworkState();
     const { chainId: currentChainId, type: networkType } = provider;
-
     const supportedNetworkIds = ['1', '3', '4', '42'];
     /* istanbul ignore next */
     if (supportedNetworkIds.indexOf(currentNetworkID) === -1) {
       return undefined;
     }
-
     const [
       etherscanTxResponse,
       etherscanTokenResponse,
     ] = await handleTransactionFetch(networkType, address, opt);
-
     const normalizedTxs = etherscanTxResponse.result.map(
       (tx: EtherscanTransactionMeta) =>
         this.normalizeTx(tx, currentNetworkID, currentChainId),
@@ -987,17 +900,14 @@ export class TransactionController extends BaseController<
       (tx: EtherscanTransactionMeta) =>
         this.normalizeTokenTx(tx, currentNetworkID, currentChainId),
     );
-
     const remoteTxs = [...normalizedTxs, ...normalizedTokenTxs].filter((tx) => {
       const alreadyInTransactions = this.state.transactions.find(
         ({ transactionHash }) => transactionHash === tx.transactionHash,
       );
       return !alreadyInTransactions;
     });
-
     const allTxs = [...remoteTxs, ...this.state.transactions];
     allTxs.sort((a, b) => (a.time < b.time ? -1 : 1));
-
     let latestIncomingTxBlockNumber: string | undefined;
     allTxs.forEach(async (tx) => {
       /* istanbul ignore next */
@@ -1040,5 +950,4 @@ export class TransactionController extends BaseController<
     return latestIncomingTxBlockNumber;
   }
 }
-
 export default TransactionController;

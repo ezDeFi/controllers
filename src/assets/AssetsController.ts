@@ -10,7 +10,6 @@ import {
   validateTokenToWatch,
   toChecksumHexAddress,
 } from '../util';
-import { MAINNET } from '../constants';
 import type { Token } from './TokenRatesController';
 import type {
   ApiCollectible,
@@ -749,7 +748,7 @@ export class AssetsController extends BaseController<
   ) {
     super(config, state);
     this.defaultConfig = {
-      networkType: MAINNET,
+      networkType: 'mainnet',
       selectedAddress: '',
       chainId: '',
     };
